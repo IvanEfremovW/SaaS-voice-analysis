@@ -1,0 +1,10 @@
+id,converter,denoiser,t_conv_sec,t_denoise_sec,t_total_sec,rtf,time_per_sec_ms,throughput_xrt,output_file
+1,ffmpeg,stat_spectral,0.0835,0.2407,0.3243,0.00925,9.25,108.2,01_ffmpeg_stat_spectral.wav
+2,ffmpeg,nonstat_spectral,0.0851,0.1848,0.2698,0.00769,7.69,130.0,02_ffmpeg_nonstat_spectral.wav
+3,ffmpeg,telephony_bandpass,0.0837,0.0084,0.0921,0.00263,2.63,380.8,03_ffmpeg_telephony_bandpass.wav
+4,torchaudio,stat_spectral,0.0144,0.1699,0.1843,0.00526,5.26,190.3,04_torchaudio_stat_spectral.wav
+5,torchaudio,nonstat_spectral,0.0081,0.1682,0.1763,0.00503,5.03,198.9,05_torchaudio_nonstat_spectral.wav
+6,torchaudio,telephony_bandpass,0.0104,0.0103,0.0207,0.00059,0.59,1697.6,06_torchaudio_telephony_bandpass.wav
+7,librosa,stat_spectral,0.0082,0.151,0.1592,0.00454,4.54,220.3,07_librosa_stat_spectral.wav
+8,librosa,nonstat_spectral,0.0054,0.1534,0.1587,0.00453,4.53,220.9,08_librosa_nonstat_spectral.wav
+9,librosa,telephony_bandpass,0.0055,0.0089,0.0144,0.00041,0.41,2432.9,09_librosa_telephony_bandpass.wav

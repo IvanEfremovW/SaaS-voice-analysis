@@ -1,0 +1,15 @@
+# Корневые зависимости ML-сервисов (Audio Preprocessing & VAD)
+# Issue #5: Предобработка аудио (Конвертация и Шумоподавление)
+# Issue #6: Детекция голосовых участков (VAD)
+
+numpy>=1.24.0,<2.0.0
+scipy>=1.11.0
+soundfile>=0.12.1
+librosa>=0.10.1
+noisereduce>=3.0.0
+webrtcvad-wheels>=2.0.11
+onnxruntime>=1.17.0
+silero-vad>=5.1.0
+torch>=2.1.0
+torchaudio>=2.1.0
+pyarrow>=14.0.0
