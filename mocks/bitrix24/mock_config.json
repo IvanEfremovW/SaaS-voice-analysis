@@ -1,0 +1,87 @@
+{
+  "voximplant.statistic.get": {
+    "method": {
+      "SEED": null
+    },
+    "generator": {
+      "MIN_TOTAL": 10,
+      "MAX_TOTAL": 200,
+      "DEFAULT_WINDOW_DAYS": 30,
+      "FIRST_CALL_ID": { "min": 1000, "max": 20000 },
+
+      "PORTAL_USERS": ["1", "7", "12", "25", "38"],
+      "VOXIMPLANT_LINES": ["reg133788", "reg204511", "74951234567"],
+      "REST_APPS": [
+        { "id": "3", "name": "PBX connector", "line": "3" },
+        { "id": "5", "name": "Cloud PBX integration", "line": "5" }
+      ],
+      "EXTERNAL_CALL_PROBABILITY": 0.4,
+      "CALL_LOG_URL_BASE": "https://storage-gw-ru-01.voximplant.com/voximplant-logs",
+
+      "CLIENTS_COUNT": { "min": 30, "max": 80 },
+      "CLIENT_PHONE": { "prefix": "79", "digits": 9 },
+      "CRM_TYPE_WEIGHTS": { "CONTACT": 60, "COMPANY": 20, "LEAD": 20 },
+      "CRM_ENTITY_ID": { "min": 100, "max": 3000 },
+      "CRM_ACTIVITY_ID": { "min": 5000, "max": 90000 },
+
+      "CALL_TYPE_WEIGHTS": { "1": 40, "2": 45, "3": 8, "4": 5, "5": 2 },
+      "INCOMING_CODE_WEIGHTS": { "200": 70, "304": 20, "603": 4, "486": 3, "480": 2, "OTHER": 1 },
+      "OUTGOING_CODE_WEIGHTS": {
+        "200": 60, "486": 10, "603": 8, "603-S": 8, "480": 5, "404": 3,
+        "484": 2, "503": 1, "402": 1, "423": 1, "403": 1
+      },
+      "FAILED_REASONS": {
+        "200": "",
+        "304": "Skipped call",
+        "603": "Call declined",
+        "603-S": "Decline self",
+        "403": "Forbidden",
+        "404": "Invalid number",
+        "486": "Busy",
+        "484": "Direction unavailable",
+        "503": "Direction unavailable",
+        "480": "Temporarily unavailable",
+        "402": "Insufficient funds",
+        "423": "Blocked",
+        "OTHER": "Call failed"
+      },
+
+      "TALK_DURATION_SEC": [
+        { "min": 8, "max": 60, "weight": 40 },
+        { "min": 61, "max": 300, "weight": 45 },
+        { "min": 301, "max": 1500, "weight": 15 }
+      ],
+      "WORKING_HOURS": { "from": 9, "to": 20, "probability": 0.85 },
+      "COST_PER_MINUTE": 1.8,
+      "COST_CURRENCY": "RUB",
+
+      "RECORDING_PROBABILITY": 0.85,
+      "VOTE_PROBABILITY": 0.3,
+      "TRANSCRIPT_PROBABILITY": 0.2,
+      "TRANSCRIPT_ID": { "min": 1, "max": 500 },
+      "COMMENT_PROBABILITY": 0.05,
+      "COMMENTS": ["Call back tomorrow", "Asked for a price list", "Wrong number", "Interested in a demo"]
+    }
+  },
+  "disk.file.get": {
+    "method": {
+      "STORAGE_ID": "1",
+      "FOLDER_ID": "143",
+      "FOLDER_NAME": "Telephony - recorded calls"
+    }
+  },
+  "utils": {
+    "time": {
+      "TZ_OFFSET": "+03:00"
+    },
+    "recordFiles": {
+      "MAX_STORED_IDS": 512,
+      "FIRST_FILE_ID": 9000,
+      "DURATION_SEC": { "min": 30, "max": 600 }
+    },
+    "audio": {
+      "SAMPLE_RATE": 8000,
+      "NOISE_AMPLITUDE": 4000
+    }
+  }
+}
