@@ -1,0 +1,8 @@
+# Зависимости модуля транскрибации речи (Speech-to-Text, STT)
+# faster-whisper работает на ctranslate2 и не требует PyTorch
+faster-whisper>=1.0.0
+av>=11.0.0,<14.0.0
+pydantic>=2.0.0
+numpy>=1.24.0,<2.0.0
+soundfile>=0.12.1
+pytest>=7.0.0

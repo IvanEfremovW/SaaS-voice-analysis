@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+.gitignore
+samples/
+audio_research/output_27/
+.venv/
+output/
+plan.md
