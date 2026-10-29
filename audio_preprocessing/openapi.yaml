@@ -1,0 +1,441 @@
+openapi: 3.0.3
+info:
+  title: SaaS Voice Analysis — Audio Preprocessing & VAD Microservice API
+  description: 'Внешний HTTP-интерфейс единого модуля предобработки аудио и детекции
+    голосовой активности (Preprocess + VAD).
+
+    Выполняет конвертацию медиафайлов в 16 kHz Mono float32, спектральное шумоподавление,
+
+    вырезание пауз/тишины через VAD и пересчет таймкодов транскрибации на исходный
+    хронометраж звонка.
+
+    '
+  contact:
+    name: SaaS-voice-analysis Team
+  version: 1.0.0
+servers:
+- url: http://localhost:8002
+  description: Локальный сервер разработки / Docker-контейнер Preprocess + VAD
+paths:
+  /api/v1/health:
+    get:
+      tags:
+      - System
+      summary: Проверка состояния сервиса и активной конфигурации конвейера
+      description: Возвращает конфигурацию активного пайплайна (converter, denoiser,
+        vad, target_sr).
+      operationId: health_check
+      responses:
+        '200':
+          description: Сервис активен, адаптеры конвертации, шумоподавления и VAD
+            готовы к работе
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineHealthResponse'
+  /api/v1/preprocess:
+    post:
+      tags:
+      - Preprocessing & VAD
+      summary: Предобработка и VAD загруженного аудиофайла
+      description: 'Принимает сырой аудиофайл через `multipart/form-data`, прогоняет
+        через цепочку
+
+        `Converter -> Denoiser -> VAD` в оперативной памяти и возвращает временные
+        границы
+
+        речевых сегментов, метрики удержания речи и (опционально) очищенное аудио
+        в формате WAV Base64.'
+      operationId: preprocess_file
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_preprocess_file'
+        required: true
+      responses:
+        '200':
+          description: Аудиозапись успешно обработана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreprocessResponse'
+        '400':
+          description: Неподдерживаемый формат файла или передан пустой аудиофайл
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Ошибка валидации входных параметров
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Внутренняя ошибка при обработке аудиопотока
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/preprocess/by-path:
+    post:
+      tags:
+      - Preprocessing & VAD
+      summary: Предобработка и VAD аудиофайла по локальному пути (Shared Volume)
+      description: 'Используется при взаимодействии контейнеров через общий том (Shared
+        Volume).
+
+        Позволяет прочитать исходный звонок по `file_path` и сохранить очищенный речевой
+
+        поток `speech_only_audio` в `output_wav_path` для последующей передачи в сервис
+        STT.'
+      operationId: preprocess_by_path
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreprocessByPathRequest'
+        required: true
+      responses:
+        '200':
+          description: Аудиозапись успешно обработана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreprocessResponse'
+        '404':
+          description: Исходный аудиофайл не найден по указанному пути
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Ошибка валидации запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Внутренняя ошибка сервиса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/remap-timestamps:
+    post:
+      tags:
+      - Preprocessing & VAD
+      summary: Восстановление таймкодов транскрибации на шкалу исходного звонка
+      description: 'Принимает результат транскрибации (`TranscriptionResult`), полученный
+        на склеенном
+
+        после VAD аудио, и список интервалов `speech_segments`. Возвращает новый `TranscriptionResult`,
+
+        в котором таймкоды `start` и `end` каждого сегмента пересчитаны относительно
+        оригинальной аудиозаписи.'
+      operationId: remap_timestamps
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemapTimestampsRequest'
+        required: true
+      responses:
+        '200':
+          description: Таймкоды сегментов успешно пересчитаны
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptionResult'
+        '422':
+          description: Ошибка валидации входных данных
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  schemas:
+    Body_preprocess_file:
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          title: File
+          description: Входной аудиофайл звонка (.mp3, .wav, .ogg, .m4a, .flac, .webm)
+        include_audio_base64:
+          type: boolean
+          title: Include Audio Base64
+          description: Вернуть ли склеенный речевой поток (16kHz Mono PCM_16 WAV)
+            в поле audio_wav_base64
+          default: false
+      type: object
+      required:
+      - file
+      title: Body_preprocess_file
+    ErrorResponse:
+      properties:
+        detail:
+          type: string
+          title: Detail
+          description: Описание причины ошибки
+          examples:
+          - 'Аудиофайл не найден: /data/calls/missing.mp3'
+      type: object
+      required:
+      - detail
+      title: ErrorResponse
+      description: Схема стандартного сообщения об ошибке.
+    PipelineHealthResponse:
+      properties:
+        status:
+          type: string
+          const: ok
+          title: Status
+          default: ok
+        converter:
+          type: string
+          title: Converter
+          description: Активный адаптер конвертации аудио
+          examples:
+          - torchaudio
+        denoiser:
+          type: string
+          title: Denoiser
+          description: Активный адаптер шумоподавления (или 'none')
+          examples:
+          - stat_spectral
+        vad:
+          type: string
+          title: Vad
+          description: Активный адаптер детекции голоса (или 'none')
+          examples:
+          - silero
+        target_sr:
+          type: integer
+          title: Target Sr
+          description: Целевая частота дискретизации (Гц)
+          examples:
+          - 16000
+      type: object
+      required:
+      - converter
+      - denoiser
+      - vad
+      - target_sr
+      title: PipelineHealthResponse
+      description: Схема ответа проверки состояния сервиса и активной конфигурации
+        конвейера.
+    PreprocessByPathRequest:
+      properties:
+        file_path:
+          type: string
+          title: File Path
+          description: Путь к исходному аудиофайлу в файловой системе / общем томе
+          examples:
+          - /data/calls/input_test_call.mp3
+        output_wav_path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Output Wav Path
+          description: Путь для сохранения очищенного речевого аудио (16kHz Mono PCM_16
+            WAV)
+          examples:
+          - /data/processed/call_speech_only.wav
+        include_audio_base64:
+          type: boolean
+          title: Include Audio Base64
+          description: Включить ли очищенное аудио в виде строки Base64 в JSON-ответ
+          default: false
+      type: object
+      required:
+      - file_path
+      title: PreprocessByPathRequest
+      description: Схема запроса предобработки по локальному пути (Shared Volume).
+    PreprocessResponse:
+      properties:
+        sample_rate:
+          type: integer
+          title: Sample Rate
+          description: Частота дискретизации выходного потока (Гц)
+          examples:
+          - 16000
+        original_duration:
+          type: number
+          title: Original Duration
+          description: Длительность исходной аудиозаписи (сек)
+          examples:
+          - 35.07
+        speech_duration:
+          type: number
+          title: Speech Duration
+          description: Суммарная длительность чистой речи после VAD (сек)
+          examples:
+          - 28.74
+        retention_pct:
+          type: number
+          title: Retention Pct
+          description: Процент сохраненного аудиопотока после удаления тишины (0..100%)
+          examples:
+          - 81.95
+        segments_count:
+          type: integer
+          title: Segments Count
+          description: Количество обнаруженных речевых сегментов
+          examples:
+          - 8
+        speech_segments:
+          items:
+            $ref: '#/components/schemas/SpeechSegmentDTO'
+          type: array
+          title: Speech Segments
+          description: Список временных границ речи относительно исходного файла
+        output_wav_path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Output Wav Path
+          description: Путь к сохраненному WAV-файлу с чистой речью (если был указан
+            в запросе)
+          examples:
+          - /data/processed/call_speech_only.wav
+        audio_wav_base64:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Audio Wav Base64
+          description: Очищенное речевое аудио в формате WAV (16kHz PCM_16), закодированное
+            в Base64
+          examples:
+          - null
+      type: object
+      required:
+      - sample_rate
+      - original_duration
+      - speech_duration
+      - retention_pct
+      - segments_count
+      - speech_segments
+      title: PreprocessResponse
+      description: Схема ответа предобработки и VAD аудиофайла.
+    RemapTimestampsRequest:
+      properties:
+        transcription:
+          $ref: '#/components/schemas/TranscriptionResult'
+          description: Исходный результат транскрибации модели Whisper
+        speech_segments:
+          items:
+            $ref: '#/components/schemas/SpeechSegmentDTO'
+          type: array
+          title: Speech Segments
+          description: Сегменты речи от модуля VAD относительно исходного файла
+        original_duration:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Original Duration
+          description: Длительность исходного аудиофайла в секундах
+          examples:
+          - 35.07
+      type: object
+      required:
+      - transcription
+      - speech_segments
+      title: RemapTimestampsRequest
+      description: Схема запроса пересчета таймкодов транскрибации на шкалу исходного
+        файла.
+    SpeechSegmentDTO:
+      properties:
+        start:
+          type: number
+          title: Start
+          description: Начало речевого интервала в исходном файле (сек)
+          examples:
+          - 1.762
+        end:
+          type: number
+          title: End
+          description: Конец речевого интервала в исходном файле (сек)
+          examples:
+          - 2.334
+      type: object
+      required:
+      - start
+      - end
+      title: SpeechSegmentDTO
+      description: Временной интервал обнаруженной речи относительно исходной записи.
+    TranscriptionResult:
+      properties:
+        text:
+          type: string
+          title: Text
+          description: Полный объединенный текст звонка
+        language:
+          type: string
+          title: Language
+          description: Распознанный язык речи (ISO 639-1 код, например, 'ru')
+        language_probability:
+          type: number
+          title: Language Probability
+          description: Уверенность модели в определенном языке
+        duration:
+          type: number
+          title: Duration
+          description: Длительность обработанного аудио в секундах
+        segments:
+          items:
+            $ref: '#/components/schemas/TranscriptionSegment'
+          type: array
+          title: Segments
+          description: Список детализированных речевых сегментов
+      type: object
+      required:
+      - text
+      - language
+      - language_probability
+      - duration
+      title: TranscriptionResult
+      description: Итоговый результат транскрибации аудиозаписи.
+    TranscriptionSegment:
+      properties:
+        id:
+          type: integer
+          title: Id
+          description: Порядковый номер сегмента (0, 1, 2...)
+        start:
+          type: number
+          title: Start
+          description: Время начала сегмента в секундах (округление до 3 знаков)
+        end:
+          type: number
+          title: End
+          description: Время окончания сегмента в секундах (округление до 3 знаков)
+        text:
+          type: string
+          title: Text
+          description: Очищенный текст сегмента без лишних пробелов
+        avg_logprob:
+          type: number
+          title: Avg Logprob
+          description: Средняя лог-вероятность токенов (метрика уверенности)
+        no_speech_prob:
+          type: number
+          title: No Speech Prob
+          description: Вероятность отсутствия речи в данном сегменте
+      type: object
+      required:
+      - id
+      - start
+      - end
+      - text
+      - avg_logprob
+      - no_speech_prob
+      title: TranscriptionSegment
+      description: Сегмент транскрибированной речи с временными метками и метаданными
+        качества.
+tags:
+- name: Preprocessing & VAD
+  description: Очистка аудио, детекция речи (VAD) и маппинг таймкодов
+- name: System
+  description: Мониторинг состояния сервиса и активных стратегий конвейера
