@@ -1,0 +1,343 @@
+openapi: 3.1.0
+info:
+  title: SaaS Voice Analysis — STT Microservice API
+  description: 'Внешний HTTP-интерфейс изолированного модуля транскрибации речи (Speech-to-Text).
+
+    Принимает аудиодорожку звонка и возвращает структурированный текст с таймкодами
+    сегментов.
+
+    '
+  version: 1.0.0
+servers:
+- url: http://localhost:8001
+  description: Локальный сервер разработки / Docker-контейнер STT
+paths:
+  /api/v1/health:
+    get:
+      tags:
+      - System
+      summary: Проверка состояния сервиса и загруженной модели
+      description: 'Возвращает текущее состояние транскрибатора (engine, model_size,
+
+        фактический device и compute_type с учетом аппаратного fallback).'
+      operationId: health_check_api_v1_health_get
+      responses:
+        '200':
+          description: Сервис активен, модель инициализирована и готова к инференсу
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /api/v1/transcribe:
+    post:
+      tags:
+      - Transcription
+      summary: Транскрибация загруженного аудиофайла
+      description: 'Принимает аудиофайл через multipart/form-data, сохраняет его во
+        временный файл,
+
+        выполняет транскрибацию и удаляет временный файл в блоке finally.'
+      operationId: transcribe_file_api_v1_transcribe_post
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_transcribe_file_api_v1_transcribe_post'
+        required: true
+      responses:
+        '200':
+          description: Аудиозапись успешно транскрибирована
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptionResult'
+        '400':
+          description: Неподдерживаемый формат аудиофайла или передан пустой файл
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Внутренняя ошибка сервиса при распознавании
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/transcribe/by-path:
+    post:
+      tags:
+      - Transcription
+      summary: Транскрибация аудиофайла по локальному пути (Shared Volume)
+      description: Транскрибирует аудиофайл, находящийся на локальном диске или в
+        примонтированном общем томе.
+      operationId: transcribe_by_path_api_v1_transcribe_by_path_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TranscribeByPathRequest'
+        required: true
+      responses:
+        '200':
+          description: Аудиозапись успешно транскрибирована
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptionResult'
+        '404':
+          description: Указанный аудиофайл не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Внутренняя ошибка сервиса при распознавании
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    Body_transcribe_file_api_v1_transcribe_post:
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          title: File
+          description: Аудиофайл звонка (.mp3, .wav, .ogg, .m4a, .flac, .webm)
+        language:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Language
+          description: Код языка ISO 639-1 (например, 'ru') или None для автоопределения
+          default: ru
+        beam_size:
+          type: integer
+          maximum: 10.0
+          minimum: 1.0
+          title: Beam Size
+          description: Размер лучевого поиска (beam search)
+          default: 5
+        vad_filter:
+          type: boolean
+          title: Vad Filter
+          description: Использовать ли VAD-фильтр пауз перед транскрибацией
+          default: true
+        condition_on_previous_text:
+          type: boolean
+          title: Condition On Previous Text
+          description: Защита от зацикливания и повторов на длинных паузах
+          default: false
+        initial_prompt:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Initial Prompt
+          description: Начальный контекстный промпт/глоссарий для повышения точности
+            терминов
+      type: object
+      required:
+      - file
+      title: Body_transcribe_file_api_v1_transcribe_post
+    ErrorResponse:
+      properties:
+        detail:
+          type: string
+          title: Detail
+          description: Текстовое описание возникшей ошибки
+      type: object
+      required:
+      - detail
+      title: ErrorResponse
+      description: Схема стандартного сообщения об ошибке.
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    HealthResponse:
+      properties:
+        status:
+          type: string
+          const: ok
+          title: Status
+          default: ok
+        engine:
+          type: string
+          title: Engine
+          description: Имя активного STT движка/адаптера
+        model_size:
+          type: string
+          title: Model Size
+          description: Размер используемой модели Whisper
+        device:
+          type: string
+          title: Device
+          description: Фактическое вычислительное устройство (cuda/cpu)
+        compute_type:
+          type: string
+          title: Compute Type
+          description: Фактический тип вычислений/квантования
+      type: object
+      required:
+      - engine
+      - model_size
+      - device
+      - compute_type
+      title: HealthResponse
+      description: Схема ответа проверки состояния сервиса и параметров загруженной
+        модели.
+    TranscribeByPathRequest:
+      properties:
+        file_path:
+          type: string
+          title: File Path
+          description: Путь к аудиофайлу в файловой системе или общем томе
+        language:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Language
+          description: Код языка ISO 639-1 (например, 'ru') или None для автоопределения
+          default: ru
+        beam_size:
+          type: integer
+          maximum: 10.0
+          minimum: 1.0
+          title: Beam Size
+          description: Размер лучевого поиска (beam search)
+          default: 5
+        vad_filter:
+          type: boolean
+          title: Vad Filter
+          description: Использовать ли встроенный VAD-фильтр пауз
+          default: false
+        condition_on_previous_text:
+          type: boolean
+          title: Condition On Previous Text
+          description: Защита от зацикливания и повторов на паузах
+          default: false
+        initial_prompt:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Initial Prompt
+          description: Начальный промпт/глоссарий для повышения точности терминов
+      type: object
+      required:
+      - file_path
+      title: TranscribeByPathRequest
+      description: Схема запроса транскрибации по пути к файлу в локальной файловой
+        системе.
+    TranscriptionResult:
+      properties:
+        text:
+          type: string
+          title: Text
+          description: Полный объединенный текст звонка
+        language:
+          type: string
+          title: Language
+          description: Распознанный язык речи (ISO 639-1 код, например, 'ru')
+        language_probability:
+          type: number
+          title: Language Probability
+          description: Уверенность модели в определенном языке
+        duration:
+          type: number
+          title: Duration
+          description: Длительность обработанного аудио в секундах
+        segments:
+          items:
+            $ref: '#/components/schemas/TranscriptionSegment'
+          type: array
+          title: Segments
+          description: Список детализированных речевых сегментов
+      type: object
+      required:
+      - text
+      - language
+      - language_probability
+      - duration
+      title: TranscriptionResult
+      description: Итоговый результат транскрибации аудиозаписи.
+    TranscriptionSegment:
+      properties:
+        id:
+          type: integer
+          title: Id
+          description: Порядковый номер сегмента (0, 1, 2...)
+        start:
+          type: number
+          title: Start
+          description: Время начала сегмента в секундах (округление до 3 знаков)
+        end:
+          type: number
+          title: End
+          description: Время окончания сегмента в секундах (округление до 3 знаков)
+        text:
+          type: string
+          title: Text
+          description: Очищенный текст сегмента без лишних пробелов
+        avg_logprob:
+          type: number
+          title: Avg Logprob
+          description: Средняя лог-вероятность токенов (метрика уверенности)
+        no_speech_prob:
+          type: number
+          title: No Speech Prob
+          description: Вероятность отсутствия речи в данном сегменте
+      type: object
+      required:
+      - id
+      - start
+      - end
+      - text
+      - avg_logprob
+      - no_speech_prob
+      title: TranscriptionSegment
+      description: Сегмент транскрибированной речи с временными метками и метаданными
+        качества.
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
