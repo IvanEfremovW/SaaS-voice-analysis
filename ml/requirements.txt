@@ -1,1 +1,4 @@
 torch
+sentence-transformers
+langchain-huggingface
+python-dotenv
