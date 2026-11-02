@@ -2,3 +2,6 @@ torch
 sentence-transformers
 langchain-huggingface
 python-dotenv
+langchain-postgres
+psycopg[binary]
+pgvector

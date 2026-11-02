@@ -14,8 +14,12 @@ SQLALCHEMY_URL = (
     f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 )
 
+PGVECTOR_COLLECTION = os.getenv("PGVECTOR_COLLECTION", "requirements_v1")
+
 EMBEDDING_MODEL = os.getenv(
     "EMBEDDING_MODEL",
     "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
 )
 EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")
+
+VECTOR_SIZE = 384
