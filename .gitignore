@@ -225,3 +225,5 @@ __marimo__/
 
 ml/embeddings_demo.py
 ml/ingest_demo.py
+ml/retrieve_demo.py
+ml/llm_demo.py

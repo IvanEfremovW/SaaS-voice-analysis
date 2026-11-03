@@ -5,3 +5,4 @@ python-dotenv
 langchain-postgres
 psycopg[binary]
 pgvector
+langchain-openai

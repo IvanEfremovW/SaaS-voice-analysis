@@ -1,7 +1,9 @@
 import os
+from pathlib import Path
+
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
@@ -22,4 +24,8 @@ EMBEDDING_MODEL = os.getenv(
 )
 EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")
 
-VECTOR_SIZE = 384
+VECTOR_SIZE = 384 
+
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen3.6-35b-32k")
