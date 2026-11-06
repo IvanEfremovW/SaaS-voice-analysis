@@ -6,12 +6,15 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
+DEFAULT_MODEL_SIZE = "small"
+
+
 class TranscriberConfig(BaseModel):
     """
     Конфигурация параметров инференса модели транскрибации Whisper.
     """
     model_size: str = Field(
-        default="base",
+        default=DEFAULT_MODEL_SIZE,
         description="Размер модели Whisper (например, 'tiny', 'base', 'small', 'medium', 'large-v3')"
     )
     device: Literal["cuda", "cpu", "auto"] = Field(

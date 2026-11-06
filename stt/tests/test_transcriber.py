@@ -48,9 +48,9 @@ def tiny_transcriber() -> BaseTranscriber:
 
 
 @pytest.fixture(scope="session")
-def base_transcriber() -> BaseTranscriber:
-    """Транскрибатор с моделью 'base' для проверки эталонного качества."""
-    config = TranscriberConfig(model_size="base", device="cuda")
+def default_transcriber() -> BaseTranscriber:
+    """Транскрибатор с моделью по умолчанию."""
+    config = TranscriberConfig(device="cuda")
     return get_transcriber(config=config)
 
 
@@ -168,9 +168,10 @@ def test_invalid_audio_type(tiny_transcriber: BaseTranscriber):
         tiny_transcriber.transcribe(12345)  # type: ignore
 
 
-def test_base_model_quality(base_transcriber: BaseTranscriber, audio_files: list[Path]):
-    """Проверка инференса модели 'base' на первом файле."""
-    result = base_transcriber.transcribe(audio_files[0])
+def test_default_model_transcription(default_transcriber: BaseTranscriber, audio_files: list[Path]):
+    """Проверка инференса модели small по умолчанию на первом файле."""
+    assert default_transcriber.name == "faster-whisper-small"
+    result = default_transcriber.transcribe(audio_files[0])
     assert isinstance(result, TranscriptionResult)
     assert len(result.text.strip()) > 0
     assert result.language == "ru"

@@ -42,7 +42,7 @@ stt/
 
 | Поле | Тип | По умолчанию | Описание |
 | :--- | :--- | :--- | :--- |
-| `model_size` | `str` | `"base"` | Размер модели Whisper (`tiny`, `base`, `small`, `medium`, `large-v3`) |
+| `model_size` | `str` | `"small"` | Размер модели Whisper (`tiny`, `base`, `small`, `medium`, `large-v3`) |
 | `device` | `"cuda" \| "cpu" \| "auto"` | `"cuda"` | Вычислительное устройство (с автопереключением на CPU) |
 | `device_index`| `int` | `0` | Индекс целевой видеокарты |
 | `compute_type`| `str` | `"float16"` | Тип квантования (`float16`, `int8`, `float32`, `int8_float16`) |
@@ -90,7 +90,7 @@ from pathlib import Path
 from stt import get_transcriber, TranscriberConfig
 
 # 1. Создаем транскрибатор через фабрику
-config = TranscriberConfig(model_size="base", device="cuda")
+config = TranscriberConfig(model_size="small", device="cuda")
 transcriber = get_transcriber(engine="faster-whisper", config=config)
 
 # 2. Вызываем транскрибацию по пути к аудио
@@ -123,7 +123,7 @@ vad = SileroVADAdapter()
 speech_only_audio, speech_segments = vad.process(raw_audio, sr=sr)
 
 # 2. Транскрибация чистого речевого потока (1D float32 np.ndarray)
-transcriber = get_transcriber(config=TranscriberConfig(model_size="base"))
+transcriber = get_transcriber(config=TranscriberConfig(model_size="small"))
 result = transcriber.transcribe(speech_only_audio)
 
 print(f"Распознано слов: {len(result.text.split())}")
@@ -151,7 +151,7 @@ uvicorn stt.api:app --host 0.0.0.0 --port 8001
 | Переменная | По умолчанию | Описание |
 | :--- | :--- | :--- |
 | `STT_ENGINE` | `"faster-whisper"` | Идентификатор движка транскрибации |
-| `STT_MODEL_SIZE` | `"base"` | Размер модели Whisper (`tiny`, `base`, `small`, `medium`, `large-v3`) |
+| `STT_MODEL_SIZE` | `"small"` | Размер модели Whisper (`tiny`, `base`, `small`, `medium`, `large-v3`) |
 | `STT_DEVICE` | `"cuda"` | Вычислительное устройство (`cuda`, `cpu`, `auto`) |
 | `STT_COMPUTE_TYPE` | `"float16"` | Тип квантования (`float16`, `int8`, `float32`) |
 
@@ -167,8 +167,8 @@ curl -X GET "http://localhost:8001/api/v1/health" \
 ```json
 {
   "status": "ok",
-  "engine": "faster-whisper-base",
-  "model_size": "base",
+  "engine": "faster-whisper-small",
+  "model_size": "small",
   "device": "cuda",
   "compute_type": "float16"
 }
@@ -227,6 +227,6 @@ pytest stt/tests/ -v
 # Запуск только тестов REST API:
 pytest stt/tests/test_api.py -v
 
-# Генерация артефакта качества на модели 'base' (stt/transcription_samples.json):
+# Генерация артефакта качества на модели 'small' (stt/transcription_samples.json):
 python -m stt.generate_samples
 ```

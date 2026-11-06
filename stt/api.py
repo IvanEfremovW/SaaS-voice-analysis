@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 import yaml
 
-from .config import TranscriberConfig
+from .config import DEFAULT_MODEL_SIZE, TranscriberConfig
 from .interfaces import BaseTranscriber, TranscriptionResult
 from . import get_transcriber
 
@@ -85,7 +85,7 @@ def get_stt_service() -> BaseTranscriber:
     Провайдер зависимости экземпляра транскрибатора (Singleton с lazy-инициализацией).
     Считывает настройки из переменных окружения:
       - STT_ENGINE (default: 'faster-whisper')
-      - STT_MODEL_SIZE (default: 'base')
+      - STT_MODEL_SIZE (default: 'small')
       - STT_DEVICE (default: 'cuda')
       - STT_COMPUTE_TYPE (default: 'float16')
     Может быть переопределен в тестах через app.dependency_overrides[get_stt_service].
@@ -93,7 +93,7 @@ def get_stt_service() -> BaseTranscriber:
     global _stt_singleton
     if _stt_singleton is None:
         engine = os.getenv("STT_ENGINE", "faster-whisper")
-        model_size = os.getenv("STT_MODEL_SIZE", "base")
+        model_size = os.getenv("STT_MODEL_SIZE", DEFAULT_MODEL_SIZE)
         device = os.getenv("STT_DEVICE", "cuda")
         compute_type = os.getenv("STT_COMPUTE_TYPE", "float16")
 
