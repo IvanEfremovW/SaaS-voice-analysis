@@ -1,0 +1,4 @@
+vad,t_vad_sec,rtf,time_per_sec_ms,throughput_xrt,speech_sec,retention_pct,num_segments,output_file
+silero,0.1193,0.0034,3.4,294.1,28.74,81.9,8,speech_silero.wav
+webrtc,0.0046,0.00013,0.13,7598.7,32.22,91.9,5,speech_webrtc.wav
+energy,0.0059,0.00017,0.17,5984.6,4.03,11.5,10,speech_energy.wav
