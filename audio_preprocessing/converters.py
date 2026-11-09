@@ -7,15 +7,20 @@
 """
 
 import logging
+from math import gcd
 import subprocess
+from threading import Lock
 from pathlib import Path
-from typing import Tuple, Union
+from typing import TYPE_CHECKING, Tuple, Union
 import numpy as np
 
 try:
     from .interfaces import BaseConverter
 except (ImportError, ValueError):
     from audio_preprocessing.interfaces import BaseConverter
+
+if TYPE_CHECKING:
+    from torchaudio.transforms import Resample
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +58,7 @@ class FFmpegConverter(BaseConverter):
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            timeout=120,
             check=False
         )
 
@@ -78,7 +84,8 @@ class TorchAudioConverter(BaseConverter):
     """
 
     def __init__(self):
-        self._resamplers = {}
+        self._resamplers: dict[tuple[int, int], "Resample"] = {}
+        self._resampler_lock = Lock()
 
     @property
     def name(self) -> str:
@@ -108,18 +115,22 @@ class TorchAudioConverter(BaseConverter):
 
         # Ресемплинг при несовпадении частоты
         if orig_sr != target_sr:
-            if orig_sr not in self._resamplers:
-                self._resamplers[orig_sr] = torchaudio.transforms.Resample(
-                    orig_freq=orig_sr,
-                    new_freq=target_sr
-                )
-            waveform = self._resamplers[orig_sr](waveform)
+            divisor = gcd(orig_sr, target_sr)
+            if (orig_sr // divisor) * (target_sr // divisor) > 100_000:
+                raise ValueError("Слишком дорогая комбинация частот дискретизации")
+            with self._resampler_lock:
+                key = (orig_sr, target_sr)
+                if key not in self._resamplers:
+                    if len(self._resamplers) >= 8:
+                        self._resamplers.clear()
+                    self._resamplers[key] = torchaudio.transforms.Resample(orig_sr, target_sr)
+                resampler = self._resamplers[key]
+            waveform = resampler(waveform)
 
         audio_np = waveform.squeeze(0).cpu().numpy().astype(np.float32)
-        # Ограничение диапазона [-1.0, 1.0]
         np.clip(audio_np, -1.0, 1.0, out=audio_np)
-
         return audio_np, target_sr
+
 
 
 class LibrosaConverter(BaseConverter):

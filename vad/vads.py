@@ -6,6 +6,7 @@
 3. EnergyVADAdapter (librosa.effects.split по порогу громкости top_db=25)
 """
 
+from threading import Lock
 import logging
 from typing import Dict, List, Tuple
 import numpy as np
@@ -27,6 +28,7 @@ class SileroVADAdapter(BaseVAD):
     def __init__(self, threshold: float = 0.5):
         self.threshold = threshold
         self._model = None
+        self._lock = Lock()
         self._init_model()
 
     def _init_model(self):
@@ -50,16 +52,16 @@ class SileroVADAdapter(BaseVAD):
             return np.empty((0,), dtype=np.float32), []
 
         tensor_audio = torch.from_numpy(audio.astype(np.float32))
-        raw_segments = get_speech_timestamps(
-            tensor_audio,
-            self._model,
-            threshold=self.threshold,
-            sampling_rate=sr
-        )
+        with self._lock:
+            raw_segments = get_speech_timestamps(
+                tensor_audio,
+                self._model,
+                threshold=self.threshold,
+                sampling_rate=sr
+            )
 
         if not raw_segments:
-            logger.warning("Silero VAD не обнаружил речевых сегментов. Возвращается исходный сигнал.")
-            return audio, [{"start": 0.0, "end": round(len(audio) / sr, 3)}]
+            return np.empty((0,), dtype=np.float32), []
 
         speech_chunks = []
         segments = []
@@ -95,7 +97,7 @@ class WebRTCVADAdapter(BaseVAD):
         self.mode = mode
         self.frame_duration_ms = frame_duration_ms
         self.hangover_ms = hangover_ms
-        self.vad = webrtcvad.Vad(mode)
+        self._vad_factory = webrtcvad.Vad
 
     @property
     def name(self) -> str:
@@ -113,15 +115,16 @@ class WebRTCVADAdapter(BaseVAD):
 
         total_frames = len(pcm16) // samples_per_frame
         if total_frames == 0:
-            return audio, [{"start": 0.0, "end": round(len(audio) / sr, 3)}]
+            return np.empty((0,), dtype=np.float32), []
 
         # Покадровая классификация
+        vad = self._vad_factory(self.mode)
         frame_is_speech = []
         for i in range(total_frames):
             start = i * samples_per_frame
             end = start + samples_per_frame
             frame_bytes = pcm16[start:end].tobytes()
-            is_speech = self.vad.is_speech(frame_bytes, sr)
+            is_speech = vad.is_speech(frame_bytes, sr)
             frame_is_speech.append(is_speech)
 
         # Сглаживание через hangover (удержание состояния речи)
@@ -158,8 +161,8 @@ class WebRTCVADAdapter(BaseVAD):
             intervals.append((seg_start, total_frames * samples_per_frame))
 
         if not intervals:
-            logger.warning("WebRTC VAD не выделил интервалов речи. Возвращается исходный сигнал.")
-            return audio, [{"start": 0.0, "end": round(len(audio) / sr, 3)}]
+            logger.warning("WebRTC VAD не выделил интервалов речи.")
+            return np.empty((0,), dtype=np.float32), []
 
         speech_chunks = [audio[s:e] for s, e in intervals]
         segments = [
@@ -192,6 +195,9 @@ class EnergyVADAdapter(BaseVAD):
         if len(audio) == 0:
             return np.empty((0,), dtype=np.float32), []
 
+        if not np.any(audio):
+            return np.empty((0,), dtype=np.float32), []
+
         # Разделение по энергетическому порогу top_db
         intervals = librosa.effects.split(
             y=audio,
@@ -201,8 +207,8 @@ class EnergyVADAdapter(BaseVAD):
         )
 
         if len(intervals) == 0:
-            logger.warning("Energy VAD не обнаружил интервалов громче порога top_db=%s. Возвращается оригинал.", self.top_db)
-            return audio, [{"start": 0.0, "end": round(len(audio) / sr, 3)}]
+            logger.warning("Energy VAD не обнаружил интервалов громче порога top_db=%s.", self.top_db)
+            return np.empty((0,), dtype=np.float32), []
 
         speech_chunks = [audio[s:e] for s, e in intervals]
         segments = [

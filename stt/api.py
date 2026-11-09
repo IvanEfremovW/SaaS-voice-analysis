@@ -8,8 +8,10 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+from threading import Lock
 from typing import Literal, Optional, Set, Union
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from audio_http import AudioUploadLimit, PyAVInputValidator, require_shared_access, shared_path
 from pydantic import BaseModel, Field
 import yaml
 
@@ -78,6 +80,7 @@ class ErrorResponse(BaseModel):
 # --- Управление зависимостями (Dependency Injection) ---
 
 _stt_singleton: Optional[BaseTranscriber] = None
+_service_lock = Lock()
 
 
 def get_stt_service() -> BaseTranscriber:
@@ -91,27 +94,27 @@ def get_stt_service() -> BaseTranscriber:
     Может быть переопределен в тестах через app.dependency_overrides[get_stt_service].
     """
     global _stt_singleton
-    if _stt_singleton is None:
-        engine = os.getenv("STT_ENGINE", "faster-whisper")
-        model_size = os.getenv("STT_MODEL_SIZE", DEFAULT_MODEL_SIZE)
-        device = os.getenv("STT_DEVICE", "cuda")
-        compute_type = os.getenv("STT_COMPUTE_TYPE", "float16")
+    with _service_lock:
+        if _stt_singleton is None:
+            engine = os.getenv("STT_ENGINE", "faster-whisper")
+            model_size = os.getenv("STT_MODEL_SIZE", DEFAULT_MODEL_SIZE)
+            device = os.getenv("STT_DEVICE", "cuda")
+            compute_type = os.getenv("STT_COMPUTE_TYPE", "float16")
 
-        logger.info(
-            "Инициализация STT синглтона: engine=%s, model_size=%s, device=%s, compute_type=%s",
-            engine,
-            model_size,
-            device,
-            compute_type,
-        )
+            logger.info(
+                "Инициализация STT синглтона: engine=%s, model_size=%s, device=%s, compute_type=%s",
+                engine,
+                model_size,
+                device,
+                compute_type,
+            )
 
-        config = TranscriberConfig(
-            model_size=model_size,
-            device=device,  # type: ignore[arg-type]
-            compute_type=compute_type,
-        )
-        _stt_singleton = get_transcriber(engine=engine, config=config)
-
+            config = TranscriberConfig(
+                model_size=model_size,
+                device=device,  # type: ignore[arg-type]
+                compute_type=compute_type,
+            )
+            _stt_singleton = get_transcriber(engine=engine, config=config)
     return _stt_singleton
 
 
@@ -126,11 +129,13 @@ app = FastAPI(
     version="1.0.0",
     servers=[
         {
-            "url": "http://localhost:8001",
-            "description": "Локальный сервер разработки / Docker-контейнер STT",
+            "url": "/",
+            "description": "Default server / Reverse proxy root",
         }
     ],
 )
+
+app.add_middleware(AudioUploadLimit)
 
 
 # --- Эндпоинты API ---
@@ -183,6 +188,8 @@ def health_check(
     response_model=TranscriptionResult,
     summary="Транскрибация загруженного аудиофайла",
     responses={
+        413: {"description": "Превышен лимит размера или длительности аудио", "model": ErrorResponse},
+        503: {"description": "Достигнут лимит одновременных запросов", "model": ErrorResponse},
         200: {
             "description": "Аудиозапись успешно транскрибирована",
             "model": TranscriptionResult,
@@ -256,6 +263,10 @@ def transcribe_file(
                 detail="Передан пустой аудиофайл",
             )
 
+        if initial_prompt in ("string", ""):
+            initial_prompt = None
+
+        PyAVInputValidator().validate(tmp_path)
         return service.transcribe(
             tmp_path,
             language=language,
@@ -271,10 +282,15 @@ def transcribe_file(
 
 @app.post(
     "/api/v1/transcribe/by-path",
+    dependencies=[Depends(require_shared_access)],
     tags=["Transcription"],
     response_model=TranscriptionResult,
     summary="Транскрибация аудиофайла по локальному пути (Shared Volume)",
     responses={
+        413: {"description": "Превышен лимит размера или длительности аудио", "model": ErrorResponse},
+        503: {"description": "Достигнут лимит одновременных запросов", "model": ErrorResponse},
+        401: {"description": "Требуется токен доступа", "model": ErrorResponse},
+        403: {"description": "Доступ по пути запрещён", "model": ErrorResponse},
         200: {
             "description": "Аудиозапись успешно транскрибирована",
             "model": TranscriptionResult,
@@ -297,13 +313,19 @@ def transcribe_by_path(
     Транскрибирует аудиофайл, находящийся на локальном диске или в примонтированном общем томе.
     """
     try:
+        initial_prompt = request.initial_prompt
+        if initial_prompt in ("string", ""):
+            initial_prompt = None
+
+        file_path = shared_path(request.file_path, ALLOWED_AUDIO_EXTENSIONS)
+        PyAVInputValidator().validate(file_path)
         return service.transcribe(
-            request.file_path,
+            file_path,
             language=request.language,
             beam_size=request.beam_size,
             vad_filter=request.vad_filter,
             condition_on_previous_text=request.condition_on_previous_text,
-            initial_prompt=request.initial_prompt,
+            initial_prompt=initial_prompt,
         )
     except FileNotFoundError as e:
         raise HTTPException(

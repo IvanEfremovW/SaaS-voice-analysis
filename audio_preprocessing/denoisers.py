@@ -48,7 +48,7 @@ class StationarySpectralDenoiser(BaseDenoiser):
     def denoise(self, audio: np.ndarray, sr: int = 16000) -> np.ndarray:
         import noisereduce as nr
 
-        if len(audio) == 0:
+        if len(audio) < 1024:
             return audio
 
         cleaned = nr.reduce_noise(
@@ -80,7 +80,7 @@ class NonStationarySpectralDenoiser(BaseDenoiser):
     def denoise(self, audio: np.ndarray, sr: int = 16000) -> np.ndarray:
         import noisereduce as nr
 
-        if len(audio) == 0:
+        if len(audio) < 1024:
             return audio
 
         cleaned = nr.reduce_noise(

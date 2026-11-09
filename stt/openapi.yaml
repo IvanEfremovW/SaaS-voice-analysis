@@ -9,8 +9,8 @@ info:
     '
   version: 1.0.0
 servers:
-- url: http://localhost:8001
-  description: Локальный сервер разработки / Docker-контейнер STT
+- url: /
+  description: Default server / Reverse proxy root
 paths:
   /api/v1/health:
     get:
@@ -51,6 +51,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TranscriptionResult'
+        '413':
+          description: Превышен лимит размера или длительности аудио
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Достигнут лимит одновременных запросов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '400':
           description: Неподдерживаемый формат аудиофайла или передан пустой файл
           content:
@@ -77,12 +89,21 @@ paths:
       description: Транскрибирует аудиофайл, находящийся на локальном диске или в
         примонтированном общем томе.
       operationId: transcribe_by_path_api_v1_transcribe_by_path_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/TranscribeByPathRequest'
-        required: true
       responses:
         '200':
           description: Аудиозапись успешно транскрибирована
@@ -90,6 +111,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TranscriptionResult'
+        '413':
+          description: Превышен лимит размера или длительности аудио
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Достигнут лимит одновременных запросов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Требуется токен доступа
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Доступ по пути запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: Указанный аудиофайл не найден
           content:

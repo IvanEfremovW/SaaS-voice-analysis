@@ -10,9 +10,11 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+from threading import Lock
 from typing import List, Literal, Optional, Set, Union
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from audio_http import AudioUploadLimit, PyAVInputValidator, require_shared_access, shared_path
 from pydantic import BaseModel, Field
 import soundfile as sf
 import yaml
@@ -23,7 +25,6 @@ try:
         AudioPipelineResult,
         AudioPreprocessVADPipeline,
         get_audio_pipeline,
-        remap_transcription_result,
     )
 except (ImportError, ValueError):
     from audio_preprocessing.pipeline import (
@@ -31,13 +32,7 @@ except (ImportError, ValueError):
         AudioPipelineResult,
         AudioPreprocessVADPipeline,
         get_audio_pipeline,
-        remap_transcription_result,
     )
-
-try:
-    from stt.interfaces import TranscriptionResult, TranscriptionSegment
-except (ImportError, ValueError):
-    from ..stt.interfaces import TranscriptionResult, TranscriptionSegment
 
 logger = logging.getLogger("AudioPreprocessing.API")
 
@@ -145,22 +140,6 @@ class PreprocessByPathRequest(BaseModel):
     )
 
 
-class RemapTimestampsRequest(BaseModel):
-    """Схема запроса пересчета таймкодов транскрибации на шкалу исходного файла."""
-
-    transcription: TranscriptionResult = Field(
-        description="Исходный результат транскрибации модели Whisper",
-    )
-    speech_segments: List[SpeechSegmentDTO] = Field(
-        description="Сегменты речи от модуля VAD относительно исходного файла",
-    )
-    original_duration: Optional[float] = Field(
-        default=None,
-        description="Длительность исходного аудиофайла в секундах",
-        examples=[35.07],
-    )
-
-
 class ErrorResponse(BaseModel):
     """Схема стандартного сообщения об ошибке."""
 
@@ -173,6 +152,7 @@ class ErrorResponse(BaseModel):
 # --- Управление зависимостями (Dependency Injection) ---
 
 _pipeline_singleton: Optional[AudioPreprocessVADPipeline] = None
+_service_lock = Lock()
 
 
 def get_pipeline_service() -> AudioPreprocessVADPipeline:
@@ -186,32 +166,32 @@ def get_pipeline_service() -> AudioPreprocessVADPipeline:
     Может быть переопределен в тестах через app.dependency_overrides[get_pipeline_service].
     """
     global _pipeline_singleton
-    if _pipeline_singleton is None:
-        converter = os.getenv("AUDIO_PREP_CONVERTER", "torchaudio")
-        denoiser = os.getenv("AUDIO_PREP_DENOISER", "stat_spectral")
-        vad = os.getenv("AUDIO_PREP_VAD", "silero")
-        target_sr_str = os.getenv("AUDIO_PREP_TARGET_SR", "16000")
-        try:
-            target_sr = int(target_sr_str)
-        except ValueError:
-            target_sr = 16000
+    with _service_lock:
+        if _pipeline_singleton is None:
+            converter = os.getenv("AUDIO_PREP_CONVERTER", "torchaudio")
+            denoiser = os.getenv("AUDIO_PREP_DENOISER", "stat_spectral")
+            vad = os.getenv("AUDIO_PREP_VAD", "silero")
+            target_sr_str = os.getenv("AUDIO_PREP_TARGET_SR", "16000")
+            try:
+                target_sr = int(target_sr_str)
+            except ValueError:
+                target_sr = 16000
 
-        logger.info(
-            "Инициализация AudioPreprocessVADPipeline синглтона: converter=%s, denoiser=%s, vad=%s, target_sr=%d",
-            converter,
-            denoiser,
-            vad,
-            target_sr,
-        )
+            logger.info(
+                "Инициализация AudioPreprocessVADPipeline синглтона: converter=%s, denoiser=%s, vad=%s, target_sr=%d",
+                converter,
+                denoiser,
+                vad,
+                target_sr,
+            )
 
-        config = AudioPipelineConfig(
-            converter=converter,
-            denoiser=denoiser if denoiser != "none" else None,
-            vad=vad if vad != "none" else None,
-            target_sr=target_sr,
-        )
-        _pipeline_singleton = get_audio_pipeline(config=config)
-
+            config = AudioPipelineConfig(
+                converter=converter,
+                denoiser=denoiser if denoiser != "none" else None,
+                vad=vad if vad != "none" else None,
+                target_sr=target_sr,
+            )
+            _pipeline_singleton = get_audio_pipeline(config=config)
     return _pipeline_singleton
 
 
@@ -226,7 +206,7 @@ def reset_pipeline_service() -> None:
 tags_metadata = [
     {
         "name": "Preprocessing & VAD",
-        "description": "Очистка аудио, детекция речи (VAD) и маппинг таймкодов",
+        "description": "Очистка аудио и детекция речи (VAD)",
     },
     {
         "name": "System",
@@ -238,20 +218,22 @@ app = FastAPI(
     title="SaaS Voice Analysis — Audio Preprocessing & VAD Microservice API",
     description=(
         "Внешний HTTP-интерфейс единого модуля предобработки аудио и детекции голосовой активности (Preprocess + VAD).\n"
-        "Выполняет конвертацию медиафайлов в 16 kHz Mono float32, спектральное шумоподавление,\n"
-        "вырезание пауз/тишины через VAD и пересчет таймкодов транскрибации на исходный хронометраж звонка.\n"
+        "Выполняет конвертацию медиафайлов в 16 kHz Mono float32, спектральное шумоподавление\n"
+        "и вырезание пауз/тишины через VAD.\n"
     ),
     version="1.0.0",
     contact={"name": "SaaS-voice-analysis Team"},
     openapi_tags=tags_metadata,
     servers=[
         {
-            "url": "http://localhost:8002",
-            "description": "Локальный сервер разработки / Docker-контейнер Preprocess + VAD",
+            "url": "/",
+            "description": "Default server / Reverse proxy root",
         }
     ],
 )
 app.openapi_version = "3.0.3"
+
+app.add_middleware(AudioUploadLimit)
 
 
 # --- Эндпоинты API ---
@@ -302,6 +284,8 @@ def health_check(
     operation_id="preprocess_file",
     response_model=PreprocessResponse,
     responses={
+        413: {"description": "Превышен лимит размера или длительности аудио", "model": ErrorResponse},
+        503: {"description": "Достигнут лимит одновременных запросов", "model": ErrorResponse},
         200: {
             "description": "Аудиозапись успешно обработана",
             "model": PreprocessResponse,
@@ -361,6 +345,7 @@ def preprocess_file(
                 detail="Передан пустой аудиофайл",
             )
 
+        PyAVInputValidator().validate(tmp_path)
         result = service.process_detailed(tmp_path)
 
         audio_b64: Optional[str] = None
@@ -392,11 +377,13 @@ def preprocess_file(
         )
     except HTTPException:
         raise
+    except ValueError:
+        raise HTTPException(400, "Недопустимые параметры аудио") from None
     except Exception as e:
         logger.exception("Внутренняя ошибка при обработке аудиопотока: %s", e)
         raise HTTPException(
             status_code=500,
-            detail=f"Внутренняя ошибка при обработке аудиопотока: {e}",
+            detail="Внутренняя ошибка при обработке аудиопотока",
         )
     finally:
         if tmp_path is not None:
@@ -405,6 +392,7 @@ def preprocess_file(
 
 @app.post(
     "/api/v1/preprocess/by-path",
+    dependencies=[Depends(require_shared_access)],
     tags=["Preprocessing & VAD"],
     summary="Предобработка и VAD аудиофайла по локальному пути (Shared Volume)",
     description=(
@@ -415,6 +403,11 @@ def preprocess_file(
     operation_id="preprocess_by_path",
     response_model=PreprocessResponse,
     responses={
+        413: {"description": "Превышен лимит размера или длительности аудио", "model": ErrorResponse},
+        503: {"description": "Достигнут лимит одновременных запросов", "model": ErrorResponse},
+        401: {"description": "Требуется токен доступа", "model": ErrorResponse},
+        403: {"description": "Доступ по пути запрещён", "model": ErrorResponse},
+        409: {"description": "Выходной файл уже существует", "model": ErrorResponse},
         200: {
             "description": "Аудиозапись успешно обработана",
             "model": PreprocessResponse,
@@ -441,13 +434,13 @@ def preprocess_by_path(
     Предобрабатывает аудиофайл по локальному пути или общему тому (Shared Volume).
     Опционально сохраняет речевой поток speech_only_audio в output_wav_path и/или возвращает в base64.
     """
-    file_path = Path(request.file_path)
-    if not file_path.is_file():
-        raise HTTPException(
-            status_code=404,
-            detail=f"Исходный аудиофайл не найден: {request.file_path}",
-        )
+    file_path = shared_path(request.file_path, ALLOWED_AUDIO_EXTENSIONS)
+    out_path = (
+        shared_path(request.output_wav_path, {".wav"}, output=True)
+        if request.output_wav_path else None
+    )
 
+    PyAVInputValidator().validate(file_path)
     try:
         result = service.process_detailed(file_path)
     except FileNotFoundError as e:
@@ -455,24 +448,30 @@ def preprocess_by_path(
             status_code=404,
             detail=str(e),
         )
+    except ValueError:
+        raise HTTPException(400, "Недопустимые параметры аудио") from None
     except Exception as e:
         logger.exception("Ошибка при обработке файла по пути: %s", request.file_path)
         raise HTTPException(
             status_code=500,
-            detail=f"Внутренняя ошибка сервиса: {e}",
+            detail="Внутренняя ошибка сервиса",
         )
 
     saved_wav_path: Optional[str] = None
-    if request.output_wav_path:
-        out_path = Path(request.output_wav_path).resolve()
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        sf.write(
-            str(out_path),
-            result.speech_only_audio,
-            result.sample_rate,
-            format="WAV",
-            subtype="PCM_16",
-        )
+    if out_path is not None:
+        staged_path: Optional[Path] = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=out_path.parent, suffix=".wav", delete=False) as output:
+                staged_path = Path(output.name)
+                sf.write(output, result.speech_only_audio, result.sample_rate, format="WAV", subtype="PCM_16")
+            os.link(staged_path, out_path)
+        except FileExistsError:
+            raise HTTPException(409, "Выходной файл уже существует") from None
+        except FileNotFoundError:
+            raise HTTPException(400, "Выходной каталог должен существовать") from None
+        finally:
+            if staged_path is not None:
+                staged_path.unlink(missing_ok=True)
         saved_wav_path = str(out_path)
 
     audio_b64: Optional[str] = None
@@ -501,46 +500,6 @@ def preprocess_by_path(
         speech_segments=segments_dto,
         output_wav_path=saved_wav_path,
         audio_wav_base64=audio_b64,
-    )
-
-
-@app.post(
-    "/api/v1/remap-timestamps",
-    tags=["Preprocessing & VAD"],
-    summary="Восстановление таймкодов транскрибации на шкалу исходного звонка",
-    description=(
-        "Принимает результат транскрибации (`TranscriptionResult`), полученный на склеенном\n"
-        "после VAD аудио, и список интервалов `speech_segments`. Возвращает новый `TranscriptionResult`,\n"
-        "в котором таймкоды `start` и `end` каждого сегмента пересчитаны относительно оригинальной аудиозаписи.\n"
-    ),
-    operation_id="remap_timestamps",
-    response_model=TranscriptionResult,
-    responses={
-        200: {
-            "description": "Таймкоды сегментов успешно пересчитаны",
-            "model": TranscriptionResult,
-        },
-        422: {
-            "description": "Ошибка валидации входных данных",
-            "model": ErrorResponse,
-        },
-    },
-)
-def remap_timestamps(
-    request: RemapTimestampsRequest,
-) -> TranscriptionResult:
-    """
-    Принимает результат транскрибации (TranscriptionResult) и сегменты речи VAD,
-    возвращая TranscriptionResult с таймкодами исходного звонка.
-    """
-    segments_dicts = [
-        {"start": seg.start, "end": seg.end}
-        for seg in request.speech_segments
-    ]
-    return remap_transcription_result(
-        result=request.transcription,
-        speech_segments=segments_dicts,
-        original_duration=request.original_duration,
     )
 
 

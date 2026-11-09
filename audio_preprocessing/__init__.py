@@ -19,7 +19,6 @@ from .pipeline import (
     get_denoiser,
     get_audio_pipeline,
     remap_time_to_original,
-    remap_transcription_result,
 )
 
 __all__ = [
@@ -42,5 +41,4 @@ __all__ = [
     "AudioPipelineResult",
     "AudioPreprocessVADPipeline",
     "remap_time_to_original",
-    "remap_transcription_result",
 ]

@@ -42,11 +42,6 @@ try:
 except (ImportError, ValueError):
     from ..vad import get_vad, BaseVAD
 
-try:
-    from stt.interfaces import TranscriptionResult, TranscriptionSegment
-except (ImportError, ValueError):
-    from ..stt.interfaces import TranscriptionResult, TranscriptionSegment
-
 logger = logging.getLogger(__name__)
 
 
@@ -320,54 +315,6 @@ def remap_time_to_original(
 
     # Если значение превышает общую длину сегментов — возвращаем конец последнего
     return round(float(speech_segments[-1]["end"]), 3)
-
-
-def remap_transcription_result(
-    result: TranscriptionResult,
-    speech_segments: List[Dict[str, float]],
-    original_duration: Optional[float] = None
-) -> TranscriptionResult:
-    """
-    Возвращает новый объект TranscriptionResult с пересчитанными start / end метками
-    у всех сегментов на основе исходной шкалы времени до VAD.
-
-    :param result: Исходный результат транскрибации модели Whisper.
-    :param speech_segments: Список сегментов речи от VAD.
-    :param original_duration: Длительность исходного аудиофайла в секундах.
-    :return: Валидированный TranscriptionResult с таймкодами исходного файла.
-    """
-    new_segments: List[TranscriptionSegment] = []
-    for seg in result.segments:
-        new_start = remap_time_to_original(seg.start, speech_segments, is_end=False)
-        new_end = remap_time_to_original(seg.end, speech_segments, is_end=True)
-        if new_end < new_start:
-            new_end = new_start
-
-        new_segments.append(
-            TranscriptionSegment(
-                id=seg.id,
-                start=new_start,
-                end=new_end,
-                text=seg.text,
-                avg_logprob=seg.avg_logprob,
-                no_speech_prob=seg.no_speech_prob,
-            )
-        )
-
-    if original_duration is not None:
-        new_duration = round(float(original_duration), 3)
-    elif speech_segments:
-        new_duration = round(float(speech_segments[-1]["end"]), 3)
-    else:
-        new_duration = result.duration
-
-    return TranscriptionResult(
-        text=result.text,
-        language=result.language,
-        language_probability=result.language_probability,
-        duration=new_duration,
-        segments=new_segments,
-    )
 
 
 def get_audio_pipeline(

@@ -1,7 +1,7 @@
 """
 Интеграционные тесты для HTTP REST API сервиса предобработки аудио и VAD (FastAPI).
 Проверяют валидацию входных данных, загрузку файлов, обработку ошибок,
-сохранение аудио по пути, пересчет таймкодов и спецификацию OpenAPI.
+сохранение аудио по пути и спецификацию OpenAPI.
 """
 
 import base64
@@ -120,7 +120,7 @@ def test_preprocess_upload_empty_file(client: TestClient) -> None:
     assert "Передан пустой аудиофайл" in data["detail"]
 
 
-def test_preprocess_by_path_with_output_wav(client: TestClient, tmp_path: Path) -> None:
+def test_preprocess_by_path_with_output_wav(client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     5. POST /api/v1/preprocess/by-path с сохранением в output_wav_path -> 200 OK,
     проверка создания выходного WAV и чтения через soundfile.
@@ -128,13 +128,17 @@ def test_preprocess_by_path_with_output_wav(client: TestClient, tmp_path: Path) 
     assert REAL_AUDIO_FILE.is_file(), f"Тестовый аудиофайл не найден: {REAL_AUDIO_FILE}"
 
     out_wav = tmp_path / "speech_only.wav"
+    monkeypatch.setenv("AUDIO_SHARED_ROOT", str(tmp_path))
+    monkeypatch.setenv("AUDIO_SHARED_TOKEN", "test-token")
+    source = tmp_path / REAL_AUDIO_FILE.name
+    source.write_bytes(REAL_AUDIO_FILE.read_bytes())
     payload = {
-        "file_path": str(REAL_AUDIO_FILE),
+        "file_path": str(source),
         "output_wav_path": str(out_wav),
         "include_audio_base64": False,
     }
 
-    response = client.post("/api/v1/preprocess/by-path", json=payload)
+    response = client.post("/api/v1/preprocess/by-path", json=payload, headers={"Authorization": "Bearer test-token"})
     assert response.status_code == 200
     data = response.json()
 
@@ -147,15 +151,17 @@ def test_preprocess_by_path_with_output_wav(client: TestClient, tmp_path: Path) 
     assert data["audio_wav_base64"] is None
 
 
-def test_preprocess_by_path_not_found(client: TestClient) -> None:
+def test_preprocess_by_path_not_found(client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     6. POST /api/v1/preprocess/by-path с несуществующим путем -> 404 Not Found.
     """
+    monkeypatch.setenv("AUDIO_SHARED_ROOT", str(tmp_path))
+    monkeypatch.setenv("AUDIO_SHARED_TOKEN", "test-token")
     payload = {
-        "file_path": "/non_existent/path/to/missing_file.mp3",
+        "file_path": "missing_file.mp3",
     }
 
-    response = client.post("/api/v1/preprocess/by-path", json=payload)
+    response = client.post("/api/v1/preprocess/by-path", json=payload, headers={"Authorization": "Bearer test-token"})
     assert response.status_code == 404
 
     data = response.json()
@@ -163,56 +169,13 @@ def test_preprocess_by_path_not_found(client: TestClient) -> None:
     assert "не найден" in data["detail"].lower()
 
 
-def test_remap_timestamps_endpoint(client: TestClient) -> None:
-    """
-    7. POST /api/v1/remap-timestamps -> 200 OK,
-    проверка корректного пересчета сегментов транскрибации на шкалу исходного файла.
-    """
-    payload = {
-        "transcription": {
-            "text": "Я звоню вам по поводу препарата от грибка Милозол.",
-            "language": "ru",
-            "language_probability": 1.0,
-            "duration": 4.636,
-            "segments": [
-                {
-                    "id": 0,
-                    "start": 0.0,
-                    "end": 4.636,
-                    "text": "Я звоню вам по поводу препарата от грибка Милозол.",
-                    "avg_logprob": -0.312,
-                    "no_speech_prob": 0.045,
-                }
-            ],
-        },
-        "speech_segments": [
-            {"start": 1.762, "end": 6.398}
-        ],
-        "original_duration": 35.07,
-    }
-
-    response = client.post("/api/v1/remap-timestamps", json=payload)
-    assert response.status_code == 200
-
-    data = response.json()
-    assert data["text"] == "Я звоню вам по поводу препарата от грибка Милозол."
-    assert data["duration"] == 35.07
-    assert len(data["segments"]) == 1
-
-    seg = data["segments"][0]
-    assert seg["id"] == 0
-    assert seg["start"] == 1.762
-    assert seg["end"] == 6.398
-
-
 def test_openapi_schema_available(client: TestClient) -> None:
     """
-    8. GET /openapi.json -> 200 OK,
-    проверка наличия всех 4 эндпоинтов:
+    7. GET /openapi.json -> 200 OK,
+    проверка наличия всех 3 эндпоинтов:
       - /api/v1/health
       - /api/v1/preprocess
       - /api/v1/preprocess/by-path
-      - /api/v1/remap-timestamps
     """
     response = client.get("/openapi.json")
     assert response.status_code == 200
@@ -223,7 +186,6 @@ def test_openapi_schema_available(client: TestClient) -> None:
     assert "/api/v1/health" in paths
     assert "/api/v1/preprocess" in paths
     assert "/api/v1/preprocess/by-path" in paths
-    assert "/api/v1/remap-timestamps" in paths
 
 
 def test_dependency_override(client: TestClient) -> None:
@@ -247,3 +209,20 @@ def test_dependency_override(client: TestClient) -> None:
         assert data["vad"] == "none"
     finally:
         app.dependency_overrides.clear()
+
+
+def test_by_path_requires_authorization_and_confines_paths(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    endpoint = "/api/v1/preprocess/by-path"
+    payload = {"file_path": str(REAL_AUDIO_FILE)}
+    monkeypatch.delenv("AUDIO_SHARED_ROOT", raising=False)
+    monkeypatch.delenv("AUDIO_SHARED_TOKEN", raising=False)
+    assert client.post(endpoint, json=payload).status_code == 403
+
+    monkeypatch.setenv("AUDIO_SHARED_ROOT", str(tmp_path))
+    monkeypatch.setenv("AUDIO_SHARED_TOKEN", "test-token")
+    assert client.post(endpoint, json=payload).status_code == 401
+    assert client.post(
+        endpoint, json=payload, headers={"Authorization": "Bearer test-token"}
+    ).status_code == 403

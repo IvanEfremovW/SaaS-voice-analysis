@@ -4,18 +4,17 @@ info:
   description: 'Внешний HTTP-интерфейс единого модуля предобработки аудио и детекции
     голосовой активности (Preprocess + VAD).
 
-    Выполняет конвертацию медиафайлов в 16 kHz Mono float32, спектральное шумоподавление,
+    Выполняет конвертацию медиафайлов в 16 kHz Mono float32, спектральное шумоподавление
 
-    вырезание пауз/тишины через VAD и пересчет таймкодов транскрибации на исходный
-    хронометраж звонка.
+    и вырезание пауз/тишины через VAD.
 
     '
   contact:
     name: SaaS-voice-analysis Team
   version: 1.0.0
 servers:
-- url: http://localhost:8002
-  description: Локальный сервер разработки / Docker-контейнер Preprocess + VAD
+- url: /
+  description: Default server / Reverse proxy root
 paths:
   /api/v1/health:
     get:
@@ -60,6 +59,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PreprocessResponse'
+        '413':
+          description: Превышен лимит размера или длительности аудио
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Достигнут лимит одновременных запросов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '400':
           description: Неподдерживаемый формат файла или передан пустой аудиофайл
           content:
@@ -91,12 +102,21 @@ paths:
         поток `speech_only_audio` в `output_wav_path` для последующей передачи в сервис
         STT.'
       operationId: preprocess_by_path
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/PreprocessByPathRequest'
-        required: true
       responses:
         '200':
           description: Аудиозапись успешно обработана
@@ -104,6 +124,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PreprocessResponse'
+        '413':
+          description: Превышен лимит размера или длительности аудио
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Достигнут лимит одновременных запросов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Требуется токен доступа
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Доступ по пути запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Выходной файл уже существует
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: Исходный аудиофайл не найден по указанному пути
           content:
@@ -118,38 +168,6 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Внутренняя ошибка сервиса
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /api/v1/remap-timestamps:
-    post:
-      tags:
-      - Preprocessing & VAD
-      summary: Восстановление таймкодов транскрибации на шкалу исходного звонка
-      description: 'Принимает результат транскрибации (`TranscriptionResult`), полученный
-        на склеенном
-
-        после VAD аудио, и список интервалов `speech_segments`. Возвращает новый `TranscriptionResult`,
-
-        в котором таймкоды `start` и `end` каждого сегмента пересчитаны относительно
-        оригинальной аудиозаписи.'
-      operationId: remap_timestamps
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RemapTimestampsRequest'
-        required: true
-      responses:
-        '200':
-          description: Таймкоды сегментов успешно пересчитаны
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TranscriptionResult'
-        '422':
-          description: Ошибка валидации входных данных
           content:
             application/json:
               schema:
@@ -319,32 +337,6 @@ components:
       - speech_segments
       title: PreprocessResponse
       description: Схема ответа предобработки и VAD аудиофайла.
-    RemapTimestampsRequest:
-      properties:
-        transcription:
-          $ref: '#/components/schemas/TranscriptionResult'
-          description: Исходный результат транскрибации модели Whisper
-        speech_segments:
-          items:
-            $ref: '#/components/schemas/SpeechSegmentDTO'
-          type: array
-          title: Speech Segments
-          description: Сегменты речи от модуля VAD относительно исходного файла
-        original_duration:
-          anyOf:
-          - type: number
-          - type: 'null'
-          title: Original Duration
-          description: Длительность исходного аудиофайла в секундах
-          examples:
-          - 35.07
-      type: object
-      required:
-      - transcription
-      - speech_segments
-      title: RemapTimestampsRequest
-      description: Схема запроса пересчета таймкодов транскрибации на шкалу исходного
-        файла.
     SpeechSegmentDTO:
       properties:
         start:
@@ -365,77 +357,8 @@ components:
       - end
       title: SpeechSegmentDTO
       description: Временной интервал обнаруженной речи относительно исходной записи.
-    TranscriptionResult:
-      properties:
-        text:
-          type: string
-          title: Text
-          description: Полный объединенный текст звонка
-        language:
-          type: string
-          title: Language
-          description: Распознанный язык речи (ISO 639-1 код, например, 'ru')
-        language_probability:
-          type: number
-          title: Language Probability
-          description: Уверенность модели в определенном языке
-        duration:
-          type: number
-          title: Duration
-          description: Длительность обработанного аудио в секундах
-        segments:
-          items:
-            $ref: '#/components/schemas/TranscriptionSegment'
-          type: array
-          title: Segments
-          description: Список детализированных речевых сегментов
-      type: object
-      required:
-      - text
-      - language
-      - language_probability
-      - duration
-      title: TranscriptionResult
-      description: Итоговый результат транскрибации аудиозаписи.
-    TranscriptionSegment:
-      properties:
-        id:
-          type: integer
-          title: Id
-          description: Порядковый номер сегмента (0, 1, 2...)
-        start:
-          type: number
-          title: Start
-          description: Время начала сегмента в секундах (округление до 3 знаков)
-        end:
-          type: number
-          title: End
-          description: Время окончания сегмента в секундах (округление до 3 знаков)
-        text:
-          type: string
-          title: Text
-          description: Очищенный текст сегмента без лишних пробелов
-        avg_logprob:
-          type: number
-          title: Avg Logprob
-          description: Средняя лог-вероятность токенов (метрика уверенности)
-        no_speech_prob:
-          type: number
-          title: No Speech Prob
-          description: Вероятность отсутствия речи в данном сегменте
-      type: object
-      required:
-      - id
-      - start
-      - end
-      - text
-      - avg_logprob
-      - no_speech_prob
-      title: TranscriptionSegment
-      description: Сегмент транскрибированной речи с временными метками и метаданными
-        качества.
 tags:
 - name: Preprocessing & VAD
-  description: Очистка аудио, детекция речи (VAD) и маппинг таймкодов
+  description: Очистка аудио и детекция речи (VAD)
 - name: System
   description: Мониторинг состояния сервиса и активных стратегий конвейера
