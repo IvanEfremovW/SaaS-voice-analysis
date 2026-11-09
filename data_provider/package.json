@@ -1,0 +1,28 @@
+{
+  "name": "saas-voice-analysis",
+  "version": "1.0.0",
+  "description": "Есть внутренняя CRM (Битрикс24), в которой происходят внешние звонки между СОП (Сотрудниками отдела продаж) и клиентами.\r CRM не является частью системы и служит лишь в виде источника получения аудиозаписей.",
+  "homepage": "https://github.com/IvanEfremovW/SaaS-voice-analysis#readme",
+  "bugs": {
+    "url": "https://github.com/IvanEfremovW/SaaS-voice-analysis/issues"
+  },
+  "imports": {
+    "#app/*": "./app/*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IvanEfremovW/SaaS-voice-analysis.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env app/server.ts",
+    "typecheck": "tsc",
+    "test": "node --env-file=.env.example --test \"tests/**/*.test.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}

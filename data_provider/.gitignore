@@ -1,0 +1,5 @@
+logs/
+downloads/
+
+# JavaScript
+node_modules
