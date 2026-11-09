@@ -1,0 +1,21 @@
+{
+  "name": "bitrix24",
+  "version": "1.0.0",
+  "description": "mock service for simulation of bitrix24 API",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "./src/server.ts",
+  "imports": {
+    "#src/*": "./src/*",
+    "#config": "./mock_config.json"
+  },
+  "scripts": {
+    "start": "node --env-file=.env.defaults ./src/server.ts",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}
