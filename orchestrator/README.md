@@ -6,11 +6,10 @@
 
 ## 1. Архитектурная концепция («Чёрные ящики»)
 
-В соответствии с требованиями техлида:
-1. **Полная изоляция модулей:**
+1. **Разделение ответственности модулей:**
    - Модули `audio_preprocessing` (конвертация, шумоподавление, VAD) и `stt` (транскрибация) являются независимыми «чёрными ящиками».
-   - Внутри `stt/` нет никаких упоминаний `audio_preprocessing` или `vad`.
-   - Внутри `audio_preprocessing/` и `vad/` нет никаких упоминаний `stt`.
+   - Рабочая реализация STT не импортирует `audio_preprocessing` или `vad`; предобработка и VAD не импортируют STT. Предобработка использует VAD через его публичную фабрику.
+   - Тесты, генератор примеров и документация могут ссылаться на аудиофайлы и контекст соседних модулей.
 2. **Транскрибатор не знает о предобработке:**
    - Интерфейс `BaseTranscriber` принимает стандартный аудиопоток (1D float32 массив или путь к файлу).
    - Если предобработка включена, оркестратор передает в транскрибатор только склеенные участки речи (`speech_only_audio`).
@@ -18,8 +17,10 @@
    - Сам `stt` не знает и не должен знать, было ли аудио предварительно очищено или сегментировано.
 3. **Восстановление таймкодов на стороне оркестратора:**
    - Пересчет временных меток (`remap_transcription_result`) вынесен из модуля предобработки в оркестратор, так как именно оркестратор связывает хронометраж исходного звонка, границы пауз VAD и сегменты транскрипции.
-4. **Симметрия In-Memory и REST API:**
-   - Благодаря адаптерам `RestPreprocessorClient` и `RestTranscriberClient`, класс `CallProcessingPipeline` работает идентично как при прямом вызове Python-классов в памяти, так и поверх распределенных HTTP REST API микросервисов.
+4. **Совместимые интерфейсы In-Memory и REST API:**
+   - Адаптеры `RestPreprocessorClient` и `RestTranscriberClient` позволяют использовать `CallProcessingPipeline` с локальными Python-компонентами и HTTP-сервисами.
+   - REST-клиенты передают массивы в WAV PCM_16, что добавляет квантование относительно float32 в памяти. Клиент предобработки также приводит полученное аудио к моно 16 кГц. Побитовая идентичность результатов двух режимов не гарантируется.
+   - В обоих режимах настраивайте загрузчик и выход предобработки на 16 кГц для массива, передаваемого в STT. HTTP-сервисы дополнительно применяют ограничения размера, длительности и числа одновременных запросов.
 
 ---
 
@@ -61,6 +62,8 @@ orchestrator/
 
 ## 4. Примеры использования
 
+Установите зависимости из корневого `requirements.txt` и выполняйте команды и Python-примеры из корня репозитория.
+
 ### 4.1. Режим In-Memory (быстрый локальный запуск)
 
 ```python
@@ -69,7 +72,7 @@ from orchestrator import CallProcessingPipeline, LocalMockAudioLoader
 from stt import TranscriberConfig, get_transcriber
 
 # 1. Инициализация компонентов
-loader = LocalMockAudioLoader(base_dir="./calls")
+loader = LocalMockAudioLoader(base_dir="audio_preprocessing")
 preprocessor = get_audio_pipeline()
 transcriber = get_transcriber(config=TranscriberConfig())
 
@@ -81,12 +84,14 @@ pipeline = CallProcessingPipeline(
     remap_timestamps=True,
 )
 
-result = pipeline.run("call_12345.mp3")
+result = pipeline.run("input_test_call.mp3")
 print("Текст:", result.text)
 print("Длительность звонка:", result.duration)
 ```
 
 ### 4.2. Режим микросервисов (через HTTP REST API)
+
+Сначала запустите сервисы по инструкциям [предобработки](../audio_preprocessing/README.md) (порт 8002) и [STT](../stt/README.md) (порт 8001). Клиенты отправляют файлы через multipart-загрузку; общий том для этого примера не требуется. После использования закройте оба клиента методом `close()` или используйте их как контекстные менеджеры.
 
 ```python
 from orchestrator import (
@@ -99,7 +104,7 @@ from orchestrator import (
 # Клиенты к распределенным FastAPI микросервисам
 preprocessor = RestPreprocessorClient(base_url="http://localhost:8002")
 transcriber = RestTranscriberClient(base_url="http://localhost:8001")
-loader = LocalMockAudioLoader(base_dir="./calls")
+loader = LocalMockAudioLoader(base_dir="audio_preprocessing")
 
 pipeline = CallProcessingPipeline(
     audio_loader=loader,
@@ -108,14 +113,14 @@ pipeline = CallProcessingPipeline(
     remap_timestamps=True,
 )
 
-result = pipeline.run("call_12345.mp3")
+result = pipeline.run("input_test_call.mp3")
 ```
 
 ---
 
 ## 5. Запуск демонстрации и тестов
 
-Запуск интерактивного демо:
+Запуск консольного демо двух режимов:
 ```bash
 python -m orchestrator.demo
 ```

@@ -1,6 +1,6 @@
 # Модуль предобработки аудио и детекции речи (Preprocess + VAD)
 
-Модуль `audio_preprocessing/` реализует компонент первичной подготовки аудиосигнала телефонных звонков и детекции голосовой активности. Он объединяет конвертацию разнородных форматов в стандартизированный поток 16 kHz Mono float32, спектральную очистку от стационарных шумов телефонии, удаление пауз/тишины через VAD и обратный пересчет таймкодов транскрибации Whisper на шкалу времени исходного звонка.
+Модуль `audio_preprocessing/` реализует компонент первичной подготовки аудиосигнала телефонных звонков и детекции голосовой активности. Он объединяет конвертацию разнородных форматов в стандартизированный поток 16 kHz Mono float32, спектральную очистку от стационарных шумов телефонии, удаление пауз/тишины через VAD. Модуль возвращает речевой поток и интервалы речи на шкале исходного звонка; таймкоды транскрибации восстанавливает [оркестратор](../orchestrator/README.md).
 
 ---
 
@@ -11,8 +11,8 @@
   1. **Конвертация:** `TorchAudioConverter` (быстрое декодирование в память, нормализация амплитуды до `[-1.0, 1.0]`, приведение к 16 kHz Mono float32).
   2. **Шумоподавление:** `StationarySpectralDenoiser` на базе спектрального вычитания (подавление стационарного телефонного гула/шипения).
   3. **Детекция речи:** `SileroVADAdapter` (`threshold=0.5`) — глубокая нейросетевая сегментация речи и вырезание неинформативных пауз.
-- **Zero-disk I/O:** Вся цепочка обработки аудиопотока выполняется в оперативной памяти (NumPy / Torch Tensors), исключая лишние накладные расходы на диск.
-- **Точный маппинг таймкодов:** Функция `remap_transcription_result(...)` восстанавливает точные временные метки `start` и `end` для каждого слова/сегмента транскрибации, учитывая вырезанные участки тишины.
+- **Обработка в памяти:** Промежуточные результаты конвертации, шумоподавления и VAD передаются как NumPy-массивы / Torch Tensors. HTTP-загрузка сохраняется во временный файл, который удаляется после обработки. Маршрут по пути также позволяет сохранить итоговый WAV.
+- **Исходная шкала времени:** `speech_segments` содержит границы речи до удаления пауз. Оркестратор использует их для пересчёта `start` и `end` сегментов транскрибации. Таймкоды отдельных слов текущим STT-контрактом не предусмотрены.
 - **HTTP REST API (FastAPI):** Готовый микросервис с поддержкой Dependency Injection, валидацией через Pydantic v2 и документацией OpenAPI 3.0.3.
 
 ---
@@ -26,7 +26,7 @@ audio_preprocessing/
 ├── interfaces.py               # Абстрактные интерфейсы BaseConverter и BaseDenoiser
 ├── converters.py               # Реализации конвертеров: TorchAudio, FFmpeg, Librosa
 ├── denoisers.py                # Шумоподавление: Stationary, NonStationary, TelephonyBandpass
-├── pipeline.py                 # Единое ядро AudioPreprocessVADPipeline и маппинг таймкодов
+├── pipeline.py                 # Единое ядро AudioPreprocessVADPipeline и пересчёт отдельной метки времени
 ├── openapi.yaml                # Спецификация OpenAPI 3.0.3 REST API
 ├── requirements.txt            # Зависимости модуля предобработки
 ├── input_test_call.mp3         # Реальный аудиофайл для тестов и валидации
@@ -34,7 +34,8 @@ audio_preprocessing/
 └── tests/
     ├── __init__.py
     ├── test_pipeline.py        # Интеграционные тесты конвейера и пересчета таймкодов
-    └── test_api.py             # Тесты эндпоинтов REST API, валидации и OpenAPI
+    ├── test_api.py             # Тесты эндпоинтов REST API, валидации и OpenAPI
+    └── test_security.py        # Тесты ограничений HTTP и доступа по пути
 ```
 
 ---
@@ -84,14 +85,6 @@ class PreprocessByPathRequest(BaseModel):
     include_audio_base64: bool = False      # Включить ли аудио в формате Base64 в ответ
 ```
 
-#### `RemapTimestampsRequest`
-```python
-class RemapTimestampsRequest(BaseModel):
-    transcription: TranscriptionResult      # Результат транскрибации (из сервиса STT)
-    speech_segments: list[SpeechSegmentDTO] # Сегменты речи от VAD
-    original_duration: Optional[float]      # Длительность исходной аудиозаписи
-```
-
 ---
 
 ## 4. Python-интерфейс конвейера
@@ -115,25 +108,15 @@ print(f"Удержание речи: {result.retention_pct:.1f}%")
 print(f"Найдено сегментов: {len(result.speech_segments)}")
 ```
 
-### 4.2. Восстановление таймкодов транскрибации
+### 4.2. Передача результата в оркестратор
 
-```python
-from audio_preprocessing import remap_transcription_result
-
-# stt_result получен на сжатом речевом потоке (speech_only_audio)
-remapped_result = remap_transcription_result(
-    result=stt_result,
-    speech_segments=result.speech_segments,
-    original_duration=result.original_duration,
-)
-
-for segment in remapped_result.segments:
-    print(f"[{segment.start:.2f}s -> {segment.end:.2f}s] {segment.text}")
-```
+Передайте конвейер как `preprocessor` в `CallProcessingPipeline`: оркестратор вызовет STT и пересчитает таймкоды сегментов при `remap_timestamps=True`. Пример приведён в [README оркестратора](../orchestrator/README.md). Пересчёт готового `TranscriptionResult` доступен через Python-функцию `orchestrator.remap_transcription_result`.
 
 ---
 
 ## 5. Запуск HTTP REST API сервера
+
+Установите зависимости из корневого `requirements.txt`. Все команды и Python-примеры выполняются из корня репозитория.
 
 Запуск веб-сервиса через Uvicorn:
 
@@ -226,57 +209,6 @@ curl -X POST "http://localhost:8002/api/v1/preprocess/by-path" \
 
 ---
 
-### 6.4. Пересчет таймкодов транскрибации (`POST /api/v1/remap-timestamps`)
-
-```bash
-curl -X POST "http://localhost:8002/api/v1/remap-timestamps" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "transcription": {
-      "text": "Я звоню вам по поводу препарата от грибка Милозол.",
-      "language": "ru",
-      "language_probability": 1.0,
-      "duration": 4.636,
-      "segments": [
-        {
-          "id": 0,
-          "start": 0.0,
-          "end": 4.636,
-          "text": "Я звоню вам по поводу препарата от грибка Милозол.",
-          "avg_logprob": -0.312,
-          "no_speech_prob": 0.045
-        }
-      ]
-    },
-    "speech_segments": [
-      { "start": 1.762, "end": 6.398 }
-    ],
-    "original_duration": 35.07
-  }'
-```
-
-**Ответ (200 OK):**
-```json
-{
-  "text": "Я звоню вам по поводу препарата от грибка Милозол.",
-  "language": "ru",
-  "language_probability": 1.0,
-  "duration": 35.07,
-  "segments": [
-    {
-      "id": 0,
-      "start": 1.762,
-      "end": 6.398,
-      "text": "Я звоню вам по поводу препарата от грибка Милозол.",
-      "avg_logprob": -0.312,
-      "no_speech_prob": 0.045
-    }
-  ]
-}
-```
-
----
-
 ## 7. Тестирование
 
 Запуск модульных и интеграционных тестов:
@@ -286,5 +218,5 @@ curl -X POST "http://localhost:8002/api/v1/remap-timestamps" \
 pytest audio_preprocessing/tests/ -v
 
 # Полный регрессионный прогон модулей аудиопайплайна
-pytest audio_preprocessing/tests/ stt/tests/ -v
+pytest audio_preprocessing/tests/ stt/tests/ orchestrator/tests/ -v
 ```

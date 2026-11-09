@@ -8,7 +8,7 @@
 
 - **Паттерн Strategy / Adapter:** Модуль изолирован за абстрактным интерфейсом `BaseTranscriber`. Текущая реализация `FasterWhisperTranscriber` использует высокоэффективный инференс-движок `CTranslate2`. Архитектура позволяет подключить внешние API (например, Sber SaluteSpeech, GigaChat API) или другие локальные модели без модификации вызывающего кода.
 - **Строгая типизация (Pydantic v2):** Все контракты данных (`TranscriptionResult`, `TranscriptionSegment`, `TranscriberConfig`) валидируются моделями Pydantic v2 с поддержкой сериализации в JSON (`model_dump()`, `model_dump_json()`).
-- **Graceful Hardware Fallback:** Проверка доступности GPU осуществляется нативно через `ctranslate2.get_cuda_device_count() > 0` без тяжеловесной зависимости от PyTorch. При отсутствии CUDA или запуске на CPU происходит автоматическое переключение на `cpu` с квантованием `int8`.
+- **Graceful Hardware Fallback:** Проверка доступности GPU осуществляется нативно через `ctranslate2.get_cuda_device_count() > 0` без тяжеловесной зависимости от PyTorch. При запросе CUDA без доступных GPU используется `cpu` с `int8`. Для `cpu` и `auto` на CPU тип `float16` заменяется на `int8`; другие явно заданные типы вычислений сохраняются.
 - **Универсальный вход:** Поддерживается передача как строковых путей (`str`) и объектов `pathlib.Path`, так и массивов `numpy.ndarray` (float32, 16 kHz Mono).
 
 ---
@@ -83,6 +83,8 @@ class TranscriptionResult(BaseModel):
 
 ## 4. Примеры использования
 
+Все команды и Python-примеры выполняются из корня репозитория. Зависимости STT устанавливаются из `stt/requirements.txt`; для интеграции с VAD используйте корневой `requirements.txt`.
+
 ### Вариант А: Транскрибация по пути к файлу (`str` или `Path`)
 
 ```python
@@ -110,15 +112,17 @@ for seg in result.segments:
 
 ### Вариант Б: Передача `np.ndarray` напрямую из модуля `vad/`
 
-Интеграция со склеенным голосовым потоком после детекции голосовой активности:
+Интеграция со склеенным голосовым потоком после детекции голосовой активности. Массив для STT должен быть моно с частотой 16 кГц: Silero сохраняет частоту входа, а `transcribe(np.ndarray)` не выполняет ресемплинг. Для этого примера нужны зависимости из корневого `requirements.txt`.
 
 ```python
-import soundfile as sf
+import librosa
 from vad import SileroVADAdapter
 from stt import get_transcriber, TranscriberConfig
 
 # 1. Загрузка исходного аудио и фильтрация пауз через VAD
-raw_audio, sr = sf.read("samples/input_test_call.mp3", dtype="float32")
+raw_audio, sr = librosa.load(
+    "audio_preprocessing/input_test_call.mp3", sr=16000, mono=True, dtype="float32"
+)
 vad = SileroVADAdapter()
 speech_only_audio, speech_segments = vad.process(raw_audio, sr=sr)
 
@@ -144,7 +148,7 @@ uvicorn stt.api:app --host 0.0.0.0 --port 8001
 
 - **Интерактивная документация Swagger UI:** [http://localhost:8001/docs](http://localhost:8001/docs)
 - **Альтернативная документация ReDoc:** [http://localhost:8001/redoc](http://localhost:8001/redoc)
-- **Файл спецификации OpenAPI:** [stt/openapi.yaml](stt/openapi.yaml)
+- **Файл спецификации OpenAPI:** [openapi.yaml](openapi.yaml)
 
 ### 5.2. Конфигурация через переменные окружения
 
