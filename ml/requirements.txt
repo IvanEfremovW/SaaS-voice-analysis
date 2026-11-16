@@ -6,3 +6,6 @@ langchain-postgres
 psycopg[binary]
 pgvector
 langchain-openai
+fastapi
+uvicorn[standard]
+pydantic>=2.7,<3

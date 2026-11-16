@@ -1,38 +1,33 @@
-from typing import Dict, List
+from typing import Any
 
 from langchain_core.documents import Document
 
+from requirements_store import init_requirements_table, upsert_requirement
 from vector_store import get_vectorstore
 
 
-def add_requirements(items: List[Dict]) -> List[str]: #принимиает требования и добавляет в бд, возвращаем список айди
-  
-    docs: List[Document] = []
+def add_requirements(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Validate and save requirements; each saved item has a stable ID and version."""
+    init_requirements_table()
+    saved: list[dict[str, Any]] = []
+    docs: list[Document] = []
+    store = get_vectorstore()
 
     for item in items:
-        scope = str(item.get("scope", "base")).lower().strip()
-        client_id = str(item.get("client_id", "")).strip()
-        category = str(item.get("category", "")).strip()
-        title = str(item.get("title", "")).strip()
-        text = str(item.get("text", "")).strip()
-
-        if not text:
-            continue  # пустые требования не сохраняем
-
-        page_content = f"{title}\n{text}" if title else text  # это станет вектором
-
-        metadata = {  # это останется текстом для фильтров
-            "scope": scope,
-            "client_id": client_id,
-            "category": category,
-            "title": title,
+        rule = upsert_requirement(item)
+        saved.append(rule)
+        if rule["previous_version"] is not None:
+            store.delete(ids=[f"{rule['id']}:v{rule['previous_version']}"])
+        content = f"{rule['title']}\n{rule['text']}" if rule["title"] else rule["text"]
+        docs.append(Document(page_content=content, metadata={
+            "requirement_id": rule["id"], "version": rule["version"],
+            "active": True, "scope": rule["scope"], "client_id": rule["client_id"],
+            "category": rule["category"], "title": rule["title"],
             "source": "manual_ingest",
-        }
+        }))
 
-        docs.append(Document(page_content=page_content, metadata=metadata))
-
-    if not docs:
-        return []  # если нечего сохранять
-
-    store = get_vectorstore()
-    return store.add_documents(docs)
+    if docs:
+        store.add_documents(docs, ids=[f"{r['id']}:v{r['version']}" for r in saved])
+    for rule in saved:
+        rule.pop("previous_version", None)
+    return saved
