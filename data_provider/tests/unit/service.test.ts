@@ -3,11 +3,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { BitrixCallClient } from '#app/modules/call/client.ts';
-import { CallError } from '#app/modules/call/entity.ts';
-import type { CallFilter, Download } from '#app/modules/call/entity.ts';
-import { CallService } from '#app/modules/call/service.ts';
-import type { BitrixCall, BitrixDiskFile } from '#app/modules/call/types.ts';
+import { BitrixCallClient } from '#app/modules/data/call/client.ts';
+import { CallError } from '#app/modules/data/call/entity.ts';
+import type { CallFilter, Download } from '#app/modules/data/call/entity.ts';
+import { CallService } from '#app/modules/data/call/service.ts';
+import type { BitrixCall, BitrixDiskFile } from '#app/modules/data/call/types.ts';
 
 const bitrixCall: BitrixCall = {
   CALL_ID: 'call-1',

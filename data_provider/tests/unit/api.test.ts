@@ -3,7 +3,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, afterEach, before, beforeEach, describe, it, mock } from 'node:test';
 import { config } from '#app/config.ts';
-import { handleCallRequest } from '#app/modules/call/api.ts';
+import { handleCallRequest } from '#app/modules/data/call/api.ts';
 
 const realFetch = globalThis.fetch;
 const DOWNLOAD_URL = 'http://bitrix.test/download/9000';

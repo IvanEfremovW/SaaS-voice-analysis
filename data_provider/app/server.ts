@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { config } from '#app/config.ts';
-import { handleCallRequest } from '#app/modules/call/api.ts';
+import { handleCallRequest } from '#app/modules/data/call/api.ts';
 
 http
   .createServer(async (req, res) => {

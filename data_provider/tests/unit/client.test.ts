@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
-import { BitrixCallClient } from '#app/modules/call/client.ts';
-import { CallError } from '#app/modules/call/entity.ts';
+import { BitrixCallClient } from '#app/modules/data/call/client.ts';
+import { CallError } from '#app/modules/data/call/entity.ts';
 
 const WEBHOOK = 'http://bitrix.test/rest/1/hook';
 
