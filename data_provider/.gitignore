@@ -1,5 +1,6 @@
 logs/
 downloads/
+app/generated/
 
 # JavaScript
 node_modules

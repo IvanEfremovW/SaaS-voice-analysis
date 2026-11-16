@@ -18,5 +18,5 @@
     "erasableSyntaxOnly": true,
     "resolveJsonModule": true
   },
-  "include": ["app", "tests"]
+  "include": ["app", "tests", "prisma.config.ts"]
 }

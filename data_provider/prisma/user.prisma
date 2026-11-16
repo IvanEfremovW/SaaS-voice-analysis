@@ -1,0 +1,17 @@
+enum UserRole {
+  USER
+  ADMIN
+}
+
+model User {
+  id         String   @id @default(uuid())
+  name       String
+  email      String   @unique
+  role       UserRole @default(USER)
+  calls      Call[]
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  // "user" is a reserved word in PostgreSQL
+  @@map("users")
+}
