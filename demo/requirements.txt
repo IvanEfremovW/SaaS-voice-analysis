@@ -1,0 +1,2 @@
+-r ../stt/requirements.txt
+tone @ git+https://github.com/voicekit-team/T-one.git@3c5b6c015038173840e62cea99e10cdb1c759116

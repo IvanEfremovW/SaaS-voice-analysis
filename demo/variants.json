@@ -1,0 +1,44 @@
+[
+  {
+    "id": "current_recovery",
+    "label": "Исходный Whisper",
+    "description": "VAD и повторное распознавание пропусков",
+    "engine": "whisper",
+    "options": {"vad_filter": true, "recover_missing_speech": true}
+  },
+  {
+    "id": "vad_5s",
+    "label": "Whisper · VAD 5 с",
+    "description": "Один проход, обычная чувствительность",
+    "engine": "whisper",
+    "options": {"vad_filter": true, "recover_missing_speech": false, "vad_parameters": {"min_silence_duration_ms": 5000, "speech_pad_ms": 400, "threshold": 0.5}}
+  },
+  {
+    "id": "vad_5s_sensitive",
+    "label": "Whisper · тихая речь",
+    "description": "VAD 5 с, повышенная чувствительность",
+    "engine": "whisper",
+    "options": {"vad_filter": true, "recover_missing_speech": false, "vad_parameters": {"min_silence_duration_ms": 5000, "speech_pad_ms": 400, "threshold": 0.35}}
+  },
+  {
+    "id": "vad_5s_beam1",
+    "label": "Whisper · быстрый",
+    "description": "VAD 5 с, beam 1 вместо 5",
+    "engine": "whisper",
+    "options": {"vad_filter": true, "recover_missing_speech": false, "beam_size": 1, "vad_parameters": {"min_silence_duration_ms": 5000, "speech_pad_ms": 400, "threshold": 0.5}}
+  },
+  {
+    "id": "full_audio",
+    "label": "Whisper · всё аудио",
+    "description": "Один проход без VAD и восстановления",
+    "engine": "whisper",
+    "options": {"vad_filter": false, "recover_missing_speech": false}
+  },
+  {
+    "id": "tone",
+    "label": "T-one",
+    "description": "Отдельная модель, greedy",
+    "engine": "tone",
+    "options": {}
+  }
+]
