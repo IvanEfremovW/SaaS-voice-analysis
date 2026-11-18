@@ -82,6 +82,9 @@ def test_transcribe_upload_file_success(client: TestClient) -> None:
     assert "text" in first_segment
     assert first_segment["start"] <= first_segment["end"]
     assert len(first_segment["text"]) > 0
+    assert any(segment["words"] for segment in data["segments"])
+    assert all(line["start"] <= line["end"] for line in data["utterances"])
+    assert data["utterances"]
 
 
 def test_transcribe_upload_unsupported_extension(client: TestClient) -> None:

@@ -152,7 +152,7 @@ class RestTranscriberClient:
         self,
         base_url: str = "http://localhost:8001",
         client: Optional[Any] = None,
-        timeout: float = 120.0,
+        timeout: float = 600.0,
     ) -> None:
         """
         :param base_url: Базовый URL микросервиса транскрибации STT.
@@ -236,14 +236,7 @@ class RestTranscriberClient:
 
         resp_json = resp.json()
         segments = [
-            TranscriptionSegment(
-                id=seg["id"],
-                start=seg["start"],
-                end=seg["end"],
-                text=seg["text"],
-                avg_logprob=seg.get("avg_logprob", 0.0),
-                no_speech_prob=seg.get("no_speech_prob", 0.0),
-            )
+            TranscriptionSegment.model_validate({"avg_logprob": 0.0, "no_speech_prob": 0.0, **seg})
             for seg in resp_json.get("segments", [])
         ]
 

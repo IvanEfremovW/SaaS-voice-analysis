@@ -5,16 +5,62 @@
 """
 
 import logging
+from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, List, Optional, Union
 import ctranslate2
 from faster_whisper import WhisperModel
+from faster_whisper.audio import decode_audio
+from faster_whisper.transcribe import Segment
+from faster_whisper.vad import get_speech_timestamps
 import numpy as np
 
 from .config import TranscriberConfig
-from .interfaces import BaseTranscriber, TranscriptionResult, TranscriptionSegment
+from .coverage import RETRY_CONTEXT, retry_intervals, uncovered_intervals
+from .interfaces import (
+    BaseTranscriber,
+    TranscriptionResult,
+    TranscriptionSegment,
+    TranscriptionWord,
+    build_utterances,
+)
 
 logger = logging.getLogger("STT.FasterWhisper")
+SAMPLE_RATE = 16000
+
+
+def _convert_segments(
+    source: Iterable[Segment], duration: float, offset: float = 0.0
+) -> list[TranscriptionSegment]:
+    def timestamp(seconds: float) -> float:
+        return round(offset + min(max(seconds, 0.0), duration), 3)
+
+    return [
+        TranscriptionSegment(
+            id=segment.id,
+            start=timestamp(segment.start),
+            end=timestamp(max(segment.start, segment.end)),
+            text=segment.text.strip(),
+            avg_logprob=segment.avg_logprob,
+            no_speech_prob=segment.no_speech_prob,
+            words=[
+                TranscriptionWord(
+                    text=word.word.strip(),
+                    start=timestamp(word.start),
+                    end=timestamp(max(word.start, word.end)),
+                    probability=word.probability,
+                )
+                for word in (segment.words or [])
+                if word.word.strip()
+            ],
+        )
+        for segment in source
+    ]
+
+
+def _word_key(word: TranscriptionWord) -> str:
+    return word.text.casefold().strip('.,!?…:;«»“”\"()')
 
 
 class FasterWhisperTranscriber(BaseTranscriber):
@@ -99,6 +145,70 @@ class FasterWhisperTranscriber(BaseTranscriber):
     def actual_compute_type(self) -> str:
         return self._actual_compute_type
 
+    def _recover_speech(
+        self,
+        audio: np.ndarray,
+        segments: list[TranscriptionSegment],
+        options: dict[str, Any],
+    ) -> list[TranscriptionSegment]:
+        gaps = list(uncovered_intervals(segments, len(audio) / SAMPLE_RATE))
+        if not gaps:
+            return []
+        try:
+            speech = [
+                (chunk["start"] / SAMPLE_RATE, chunk["end"] / SAMPLE_RATE)
+                for chunk in get_speech_timestamps(audio)
+            ]
+        except RuntimeError:
+            logger.warning("Детектор речи недоступен для повторного прохода", exc_info=True)
+            return []
+        targets = retry_intervals(gaps, speech)
+        if not targets:
+            return []
+
+        known_words: dict[str, list[TranscriptionWord]] = defaultdict(list)
+        for segment in segments:
+            for word in segment.words:
+                known_words[_word_key(word)].append(word)
+
+        retry_options = {**options, "vad_filter": False, "condition_on_previous_text": False, "prefix": None}
+        recovered: list[TranscriptionSegment] = []
+        for start, end in targets:
+            clip_start = max(0, round((start - RETRY_CONTEXT) * SAMPLE_RATE))
+            clip_end = min(len(audio), round((end + RETRY_CONTEXT) * SAMPLE_RATE))
+            try:
+                retry, _ = self.model.transcribe(audio[clip_start:clip_end], **retry_options)
+                retry_segments = _convert_segments(
+                    retry, duration=(clip_end - clip_start) / SAMPLE_RATE, offset=clip_start / SAMPLE_RATE
+                )
+            except RuntimeError:
+                logger.warning("Повторное распознавание прервано, сохраняем полученные сегменты", exc_info=True)
+                break
+
+            for candidate in retry_segments:
+                if candidate.avg_logprob < -1.0:
+                    continue
+                words: list[TranscriptionWord] = []
+                for word in candidate.words:
+                    midpoint = (word.start + word.end) / 2
+                    if not start <= midpoint < end:
+                        continue
+                    seen = known_words[_word_key(word)]
+                    if any(word.start < other.end and other.start < word.end for other in seen):
+                        continue
+                    seen.append(word)
+                    words.append(word)
+                if words:
+                    recovered.append(candidate.model_copy(update={
+                        "start": words[0].start,
+                        "end": words[-1].end,
+                        "text": " ".join(word.text for word in words),
+                        "words": words,
+                    }))
+
+        logger.info("Повторное распознавание: %d участков, %d добавленных сегментов", len(targets), len(recovered))
+        return recovered
+
     def transcribe(
         self,
         audio: Union[str, Path, np.ndarray],
@@ -172,40 +282,43 @@ class FasterWhisperTranscriber(BaseTranscriber):
         )
         initial_prompt = kwargs.pop("initial_prompt", self.config.initial_prompt)
 
-        # 3. Инференс faster-whisper
-        segments_generator, info = self.model.transcribe(
-            audio_input,
+        word_timestamps = kwargs.pop("word_timestamps", self.config.word_timestamps)
+        recover = (
+            kwargs.pop("recover_missing_speech", self.config.recover_missing_speech)
+            and word_timestamps
+            and kwargs.get("clip_timestamps", "0") == "0"
+        )
+        if recover and isinstance(audio_input, str):
+            audio_input = decode_audio(audio_input, sampling_rate=SAMPLE_RATE)
+
+        options = dict(
             language=language,
             beam_size=beam_size,
             vad_filter=vad_filter,
             condition_on_previous_text=condition_on_previous_text,
             initial_prompt=initial_prompt,
+            word_timestamps=word_timestamps,
             **kwargs,
         )
+        segments_generator, info = self.model.transcribe(audio_input, **options)
+        segment_duration = info.duration if info.duration is not None else float("inf")
+        segments = _convert_segments(segments_generator, duration=segment_duration)
+        recovered = []
+        if recover and isinstance(audio_input, np.ndarray) and audio_input.size:
+            recovered = self._recover_speech(audio_input, segments, {**options, "language": info.language})
 
-        # 4. Сборка сегментов
-        segments: List[TranscriptionSegment] = []
-        for seg in segments_generator:
-            clean_text = seg.text.strip()
-            segments.append(
-                TranscriptionSegment(
-                    id=int(seg.id),
-                    start=round(float(seg.start), 3),
-                    end=round(float(seg.end), 3),
-                    text=clean_text,
-                    avg_logprob=float(seg.avg_logprob),
-                    no_speech_prob=float(seg.no_speech_prob),
-                )
-            )
-
-        # 5. Сборка полного текста и расчет длительности
-        full_text = " ".join([s.text for s in segments if s.text]).strip()
+        if recovered:
+            segments = sorted(segments + recovered, key=lambda segment: segment.start)
+            segments = [segment.model_copy(update={"id": index}) for index, segment in enumerate(segments, 1)]
+            full_text = " ".join(utterance.text for utterance in build_utterances(segments))
+        else:
+            full_text = " ".join(segment.text for segment in segments if segment.text)
 
         duration: float
         if info.duration is not None and info.duration > 0:
             duration = float(info.duration)
         elif isinstance(audio, np.ndarray):
-            duration = float(len(audio_input) / 16000.0)
+            duration = len(audio_input) / SAMPLE_RATE
         elif segments:
             duration = float(segments[-1].end)
         else:

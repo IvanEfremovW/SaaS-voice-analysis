@@ -315,12 +315,20 @@ components:
           type: array
           title: Segments
           description: Список детализированных речевых сегментов
+        utterances:
+          items:
+            $ref: '#/components/schemas/TranscriptionUtterance'
+          type: array
+          title: Utterances
+          description: Строки по паузам и окончаниям фраз на той же шкале времени
+          readOnly: true
       type: object
       required:
       - text
       - language
       - language_probability
       - duration
+      - utterances
       title: TranscriptionResult
       description: Итоговый результат транскрибации аудиозаписи.
     TranscriptionSegment:
@@ -349,6 +357,11 @@ components:
           type: number
           title: No Speech Prob
           description: Вероятность отсутствия речи в данном сегменте
+        words:
+          items:
+            $ref: '#/components/schemas/TranscriptionWord'
+          type: array
+          title: Words
       type: object
       required:
       - id
@@ -360,6 +373,44 @@ components:
       title: TranscriptionSegment
       description: Сегмент транскрибированной речи с временными метками и метаданными
         качества.
+    TranscriptionUtterance:
+      properties:
+        text:
+          type: string
+          title: Text
+        start:
+          type: number
+          title: Start
+        end:
+          type: number
+          title: End
+      type: object
+      required:
+      - text
+      - start
+      - end
+      title: TranscriptionUtterance
+    TranscriptionWord:
+      properties:
+        text:
+          type: string
+          title: Text
+        start:
+          type: number
+          title: Start
+        end:
+          type: number
+          title: End
+        probability:
+          type: number
+          title: Probability
+      type: object
+      required:
+      - text
+      - start
+      - end
+      - probability
+      title: TranscriptionWord
     ValidationError:
       properties:
         loc:

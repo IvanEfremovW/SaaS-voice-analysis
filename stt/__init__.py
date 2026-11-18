@@ -6,7 +6,13 @@
 
 from typing import Optional
 from .config import TranscriberConfig
-from .interfaces import BaseTranscriber, TranscriptionResult, TranscriptionSegment
+from .interfaces import (
+    BaseTranscriber,
+    TranscriptionResult,
+    TranscriptionSegment,
+    TranscriptionUtterance,
+    TranscriptionWord,
+)
 from .transcriber import FasterWhisperTranscriber
 
 __all__ = [
@@ -15,6 +21,8 @@ __all__ = [
     "TranscriberConfig",
     "TranscriptionResult",
     "TranscriptionSegment",
+    "TranscriptionUtterance",
+    "TranscriptionWord",
     "get_transcriber",
 ]
 

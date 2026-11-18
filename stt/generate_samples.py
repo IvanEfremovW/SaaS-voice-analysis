@@ -1,6 +1,6 @@
 """
 Скрипт генерации артефакта качества транскрибации (Issue DoD №2).
-Прогоняет 3 тестовых аудиофайла через модель Whisper 'small'
+Прогоняет 3 тестовых аудиофайла через модель Whisper по умолчанию
 и сохраняет результаты в stt/transcription_samples.json.
 """
 
@@ -44,7 +44,7 @@ def get_target_audio_files(repo_root: Path) -> List[Path]:
 
 def generate_samples(output_path: Path | None = None) -> List[Dict[str, Any]]:
     """
-    Выполняет транскрибацию 3 файлов через модель 'small' и сохраняет JSON-отчет.
+    Транскрибирует 3 файла и сохраняет JSON-отчет.
     """
     repo_root = Path(__file__).resolve().parent.parent
     if output_path is None:
@@ -52,15 +52,17 @@ def generate_samples(output_path: Path | None = None) -> List[Dict[str, Any]]:
 
     audio_files = get_target_audio_files(repo_root)
 
-    logger.info("Инициализация транскрибатора с моделью 'small' и контекстным промптом...")
     config = TranscriberConfig(
-        model_size="small",
         vad_filter=True,
         condition_on_previous_text=False,
         initial_prompt=(
             "Запись телефонного разговора колл-центра на русском языке. "
             "Стоматология, клиника, препарат, грибок, Микозан, упаковка, курс, скидка, евро, рублей."
         ),
+    )
+    logger.info(
+        "Инициализация транскрибатора с моделью '%s' и контекстным промптом...",
+        config.model_size,
     )
     transcriber = get_transcriber(config=config)
 

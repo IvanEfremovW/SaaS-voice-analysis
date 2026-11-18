@@ -20,6 +20,7 @@ stt/
 ├── __init__.py                 # Публичный экспорт: get_transcriber, модели DTO, BaseTranscriber
 ├── api.py                      # HTTP REST API сервис (FastAPI) с DI и валидацией
 ├── interfaces.py               # Абстрактный интерфейс BaseTranscriber и Pydantic-схемы
+├── coverage.py                 # Поиск речевых интервалов без распознанных слов
 ├── transcriber.py              # Реализация FasterWhisperTranscriber (CTranslate2)
 ├── config.py                   # Pydantic-конфигурация модели TranscriberConfig
 ├── openapi.yaml                # Актуальная спецификация OpenAPI 3.1 REST API
@@ -42,7 +43,7 @@ stt/
 
 | Поле | Тип | По умолчанию | Описание |
 | :--- | :--- | :--- | :--- |
-| `model_size` | `str` | `"small"` | Размер модели Whisper (`tiny`, `base`, `small`, `medium`, `large-v3`) |
+| `model_size` | `str` | `"large-v3-turbo"` | Имя модели Whisper (`tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo`) |
 | `device` | `"cuda" \| "cpu" \| "auto"` | `"cuda"` | Вычислительное устройство (с автопереключением на CPU) |
 | `device_index`| `int` | `0` | Индекс целевой видеокарты |
 | `compute_type`| `str` | `"float16"` | Тип квантования (`float16`, `int8`, `float32`, `int8_float16`) |
@@ -51,6 +52,10 @@ stt/
 | `vad_filter` | `bool` | `False` | Внутренний VAD Whisper (`False`, т.к. используется модуль `vad/`) |
 | `condition_on_previous_text` | `bool` | `False` | Защита от зацикливания и галлюцинаций на паузах |
 | `initial_prompt` | `Optional[str]` | `None` | Начальный контекст/глоссарий для повышения точности терминов |
+| `word_timestamps` | `bool` | `True` | Возвращать таймкоды отдельных слов |
+| `recover_missing_speech` | `bool` | `True` | Повторно распознавать речь в промежутках между словами |
+
+Встроенный детектор голоса ищет промежутки от трёх секунд, где есть речь без распознанных слов. Адаптер повторно распознаёт до 20 таких участков за запрос, берёт до четырёх секунд контекста по краям и добавляет слова внутри пропуска. Повторный проход требует таймкодов слов и доступен для полного аудиофайла или PCM-массива.
 
 ---
 
@@ -66,6 +71,7 @@ class TranscriptionSegment(BaseModel):
     text: str             # Очищенный текст сегмента
     avg_logprob: float    # Средняя лог-вероятность токенов (уверенность)
     no_speech_prob: float # Вероятность отсутствия речи
+    words: list[TranscriptionWord]
 ```
 
 #### `TranscriptionResult`
@@ -78,6 +84,8 @@ class TranscriptionResult(BaseModel):
     duration: float                       # Длительность аудиозаписи в секундах
     segments: list[TranscriptionSegment]  # Список всех сегментов
 ```
+
+Каждый элемент `words` содержит `text`, `start`, `end` и `probability`. Вычисляемое поле `utterances` содержит готовые строки с `text`, `start` и `end`. Они собираются по паузам и окончаниям фраз. Таймкоды отсчитываются от начала аудио, поданного в STT. После предобработки оркестратор переводит их на шкалу исходной записи.
 
 ---
 
@@ -92,7 +100,7 @@ from pathlib import Path
 from stt import get_transcriber, TranscriberConfig
 
 # 1. Создаем транскрибатор через фабрику
-config = TranscriberConfig(model_size="small", device="cuda")
+config = TranscriberConfig(device="cuda")
 transcriber = get_transcriber(engine="faster-whisper", config=config)
 
 # 2. Вызываем транскрибацию по пути к аудио
@@ -117,7 +125,7 @@ for seg in result.segments:
 ```python
 import librosa
 from vad import SileroVADAdapter
-from stt import get_transcriber, TranscriberConfig
+from stt import get_transcriber
 
 # 1. Загрузка исходного аудио и фильтрация пауз через VAD
 raw_audio, sr = librosa.load(
@@ -127,7 +135,7 @@ vad = SileroVADAdapter()
 speech_only_audio, speech_segments = vad.process(raw_audio, sr=sr)
 
 # 2. Транскрибация чистого речевого потока (1D float32 np.ndarray)
-transcriber = get_transcriber(config=TranscriberConfig(model_size="small"))
+transcriber = get_transcriber()
 result = transcriber.transcribe(speech_only_audio)
 
 print(f"Распознано слов: {len(result.text.split())}")
@@ -155,7 +163,7 @@ uvicorn stt.api:app --host 0.0.0.0 --port 8001
 | Переменная | По умолчанию | Описание |
 | :--- | :--- | :--- |
 | `STT_ENGINE` | `"faster-whisper"` | Идентификатор движка транскрибации |
-| `STT_MODEL_SIZE` | `"small"` | Размер модели Whisper (`tiny`, `base`, `small`, `medium`, `large-v3`) |
+| `STT_MODEL_SIZE` | `"large-v3-turbo"` | Имя модели Whisper (`tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo`) |
 | `STT_DEVICE` | `"cuda"` | Вычислительное устройство (`cuda`, `cpu`, `auto`) |
 | `STT_COMPUTE_TYPE` | `"float16"` | Тип квантования (`float16`, `int8`, `float32`) |
 
@@ -171,8 +179,8 @@ curl -X GET "http://localhost:8001/api/v1/health" \
 ```json
 {
   "status": "ok",
-  "engine": "faster-whisper-small",
-  "model_size": "small",
+  "engine": "faster-whisper-large-v3-turbo",
+  "model_size": "large-v3-turbo",
   "device": "cuda",
   "compute_type": "float16"
 }
@@ -190,7 +198,7 @@ curl -X POST "http://localhost:8001/api/v1/transcribe" \
 Пример ответа:
 ```json
 {
-  "text": "Стоматология СМЛ, здравствуйте! ...",
+  "text": "Здравствуйте!",
   "language": "ru",
   "language_probability": 0.985,
   "duration": 48.72,
@@ -199,11 +207,13 @@ curl -X POST "http://localhost:8001/api/v1/transcribe" \
       "id": 0,
       "start": 0.0,
       "end": 2.14,
-      "text": "Стоматология СМЛ, здравствуйте!",
+      "text": "Здравствуйте!",
       "avg_logprob": -0.28,
-      "no_speech_prob": 0.02
+      "no_speech_prob": 0.02,
+      "words": [{"text": "Здравствуйте!", "start": 0.0, "end": 2.14, "probability": 0.94}]
     }
-  ]
+  ],
+  "utterances": [{"text": "Здравствуйте!", "start": 0.0, "end": 2.14}]
 }
 ```
 
@@ -240,6 +250,6 @@ pytest stt/tests/ -v
 # Запуск только тестов REST API:
 pytest stt/tests/test_api.py -v
 
-# Генерация артефакта качества на модели 'small' (stt/transcription_samples.json):
+# Генерация артефакта качества на модели по умолчанию (stt/transcription_samples.json):
 python -m stt.generate_samples
 ```

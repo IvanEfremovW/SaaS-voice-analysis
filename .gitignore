@@ -220,6 +220,7 @@ __marimo__/
 .streamlit/secrets.toml
 
 .gitignore
+!demo/.gitignore
 samples/
 audio_research/output_27/
 .venv/

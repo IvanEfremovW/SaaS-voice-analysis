@@ -1,0 +1,8 @@
+[
+  {"name": "current_recovery", "options": {"vad_filter": true, "recover_missing_speech": true}},
+  {"name": "vad_default", "options": {"vad_filter": true}},
+  {"name": "full_audio", "options": {"vad_filter": false}},
+  {"name": "vad_5s", "options": {"vad_filter": true, "vad_parameters": {"min_silence_duration_ms": 5000, "speech_pad_ms": 400, "threshold": 0.5}}},
+  {"name": "vad_5s_sensitive", "options": {"vad_filter": true, "vad_parameters": {"min_silence_duration_ms": 5000, "speech_pad_ms": 400, "threshold": 0.35}}},
+  {"name": "vad_5s_beam1", "options": {"vad_filter": true, "beam_size": 1, "vad_parameters": {"min_silence_duration_ms": 5000, "speech_pad_ms": 400, "threshold": 0.5}}}
+]

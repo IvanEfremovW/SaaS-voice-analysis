@@ -27,7 +27,7 @@ from orchestrator import (
 )
 from stt import FasterWhisperTranscriber, TranscriberConfig, get_transcriber
 from stt.api import app as stt_app, get_stt_service
-from stt.interfaces import TranscriptionResult, TranscriptionSegment
+from stt.interfaces import TranscriptionResult, TranscriptionSegment, TranscriptionWord
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REAL_AUDIO_FILE = REPO_ROOT / "audio_preprocessing" / "input_test_call.mp3"
@@ -175,6 +175,8 @@ def test_orchestrator_via_rest_api_clients(tiny_transcriber: FasterWhisperTransc
             assert len(result.text.strip()) > 0
             assert len(result.segments) > 0
             assert result.duration > 30.0
+            assert any(segment.words for segment in result.segments)
+            assert result.utterances
 
             for seg in result.segments:
                 assert isinstance(seg, TranscriptionSegment)
@@ -216,6 +218,7 @@ def test_remap_time_and_transcription_result():
                 text="Тестовая",
                 avg_logprob=-0.2,
                 no_speech_prob=0.01,
+                words=[TranscriptionWord(text="Тестовая", start=0.5, end=2.5, probability=0.9)],
             ),
             TranscriptionSegment(
                 id=1,
@@ -224,6 +227,7 @@ def test_remap_time_and_transcription_result():
                 text="фраза",
                 avg_logprob=-0.1,
                 no_speech_prob=0.02,
+                words=[TranscriptionWord(text="фраза", start=3.5, end=7.5, probability=0.9)],
             ),
         ],
     )
@@ -235,6 +239,9 @@ def test_remap_time_and_transcription_result():
     assert remapped.segments[0].end == 4.5
     assert remapped.segments[1].start == 10.5
     assert remapped.segments[1].end == 14.5
+    assert remapped.segments[1].words[0].start == 10.5
+    assert remapped.segments[1].words[0].end == 14.5
+    assert [line.text for line in remapped.utterances] == ["Тестовая", "фраза"]
 
 
 def test_loader_file_not_found():

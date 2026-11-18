@@ -6,7 +6,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
-DEFAULT_MODEL_SIZE = "small"
+DEFAULT_MODEL_SIZE = "large-v3-turbo"
 
 
 class TranscriberConfig(BaseModel):
@@ -15,7 +15,7 @@ class TranscriberConfig(BaseModel):
     """
     model_size: str = Field(
         default=DEFAULT_MODEL_SIZE,
-        description="Размер модели Whisper (например, 'tiny', 'base', 'small', 'medium', 'large-v3')"
+        description="Имя модели Whisper (например, 'tiny', 'small', 'large-v3-turbo')"
     )
     device: Literal["cuda", "cpu", "auto"] = Field(
         default="cuda",
@@ -51,3 +51,5 @@ class TranscriberConfig(BaseModel):
         default=None,
         description="Начальный промпт/контекст для повышения точности терминов"
     )
+    word_timestamps: bool = Field(default=True, description="Сохранять таймкоды слов")
+    recover_missing_speech: bool = Field(default=True, description="Повторять распознавание участков речи без слов")

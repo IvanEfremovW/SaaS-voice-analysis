@@ -5,6 +5,7 @@
 """
 
 from pathlib import Path
+from types import SimpleNamespace
 import numpy as np
 import pytest
 import soundfile as sf
@@ -169,10 +170,46 @@ def test_invalid_audio_type(tiny_transcriber: BaseTranscriber):
 
 
 def test_default_model_transcription(default_transcriber: BaseTranscriber, audio_files: list[Path]):
-    """Проверка инференса модели small по умолчанию на первом файле."""
-    assert default_transcriber.name == "faster-whisper-small"
+    """Проверка транскрибации первого файла моделью по умолчанию."""
+    assert default_transcriber.name == "faster-whisper-large-v3-turbo"
     result = default_transcriber.transcribe(audio_files[0])
     assert isinstance(result, TranscriptionResult)
     assert len(result.text.strip()) > 0
     assert result.language == "ru"
     assert len(result.segments) > 0
+
+
+def test_recovery_fills_speech_gap_with_original_timestamps(monkeypatch: pytest.MonkeyPatch):
+    def segment(*words: tuple[float, float, str]) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=1, start=words[0][0], end=words[-1][1], avg_logprob=-0.2, no_speech_prob=0.01,
+            text=" ".join(word for _, _, word in words),
+            words=[SimpleNamespace(start=start, end=end, word=word, probability=0.9)
+                   for start, end, word in words],
+        )
+
+    class Model:
+        def transcribe(self, audio: np.ndarray, **options: object):
+            assert options["word_timestamps"] is True
+            if len(audio) == 15 * 16000:
+                output = segment((5.2, 5.5, "Это"), (9.2, 9.5, "фразы."))
+            else:
+                assert len(audio) == round((13.2 - 1.5) * 16000)
+                assert options["vad_filter"] is False
+                output = segment(
+                    (3.7, 4.0, "Это"), (4.6, 5.1, "просто"),
+                    (5.4, 6.0, "середина"), (6.5, 7.1, "длинной"), (7.6, 7.8, "фразы."),
+                )
+            return iter([output]), SimpleNamespace(duration=15.0, language="ru", language_probability=1.0)
+
+    monkeypatch.setattr("stt.transcriber.WhisperModel", lambda **options: Model())
+    monkeypatch.setattr("stt.transcriber.get_speech_timestamps", lambda audio: [{"start": 80000, "end": 152000}])
+
+    transcriber = get_transcriber(config=TranscriberConfig(device="cpu", compute_type="int8"))
+    result = transcriber.transcribe(np.zeros(15 * 16000, dtype=np.float32), vad_filter=True)
+
+    assert result.text == "Это просто середина длинной фразы."
+    assert result.segments[1].words[0].start == 6.1
+    assert [line.model_dump() for line in result.utterances] == [
+        {"start": 5.2, "end": 9.5, "text": result.text},
+    ]

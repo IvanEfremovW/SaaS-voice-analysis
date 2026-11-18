@@ -88,7 +88,7 @@ def get_stt_service() -> BaseTranscriber:
     Провайдер зависимости экземпляра транскрибатора (Singleton с lazy-инициализацией).
     Считывает настройки из переменных окружения:
       - STT_ENGINE (default: 'faster-whisper')
-      - STT_MODEL_SIZE (default: 'small')
+      - STT_MODEL_SIZE (default: DEFAULT_MODEL_SIZE из stt.config)
       - STT_DEVICE (default: 'cuda')
       - STT_COMPUTE_TYPE (default: 'float16')
     Может быть переопределен в тестах через app.dependency_overrides[get_stt_service].

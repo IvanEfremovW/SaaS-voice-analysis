@@ -81,16 +81,12 @@ def remap_transcription_result(
         if new_end < new_start:
             new_end = new_start
 
-        new_segments.append(
-            TranscriptionSegment(
-                id=seg.id,
-                start=new_start,
-                end=new_end,
-                text=seg.text,
-                avg_logprob=seg.avg_logprob,
-                no_speech_prob=seg.no_speech_prob,
-            )
-        )
+        words = []
+        for word in seg.words:
+            word_start = remap_time_to_original(word.start, speech_segments)
+            word_end = remap_time_to_original(word.end, speech_segments, is_end=True)
+            words.append(word.model_copy(update={"start": word_start, "end": max(word_start, word_end)}))
+        new_segments.append(seg.model_copy(update={"start": new_start, "end": new_end, "words": words}))
 
     if original_duration is not None:
         new_duration = round(float(original_duration), 3)
