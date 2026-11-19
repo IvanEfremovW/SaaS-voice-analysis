@@ -3,7 +3,7 @@
 Проверяют:
 1. Создание продакшн-стека по умолчанию (torchaudio + stat_spectral + silero).
 2. Фабрики get_converter, get_denoiser, get_vad и обработку недопустимых имен.
-3. Прогон конвейера на 3 реальных аудиофайлах датасета (zero-disk I/O, float32, VAD).
+3. Прогон конвейера на аудиопримере из репозитория датасета (zero-disk I/O, float32, VAD).
 4. Математическую точность утилиты восстановления таймкодов (remap_time_to_original).
 """
 
@@ -34,21 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 @pytest.fixture(scope="session")
 def audio_files() -> List[Path]:
-    """Список из трех реальных аудиофайлов разного формата и происхождения."""
-    files = [
-        REPO_ROOT / "audio_preprocessing" / "input_test_call.mp3",
-        REPO_ROOT / "samples" / "test_call_youtube.mp3",
-        REPO_ROOT
-        / "samples"
-        / "AxonData"
-        / "russian-speech-recognition-dataset"
-        / "Call center data samples RU"
-        / "1756465406.16342 (RU Pharma Sale)"
-        / "1756465406.16342.mp3",
-    ]
-    for f in files:
-        assert f.is_file(), f"Аудиофайл не найден: {f}"
-    return files
+    return [REPO_ROOT / "testdata" / "synthetic_call.wav"]
 
 
 def test_default_production_stack():
@@ -136,9 +122,9 @@ def test_factories_and_invalid_names():
     assert bypass_pipeline.vad is None
 
 
-def test_pipeline_on_three_real_files(audio_files: List[Path]):
+def test_pipeline_on_recording(audio_files: List[Path]):
     """
-    Прогон AudioPreprocessVADPipeline на трех реальных аудиофайлах датасета:
+    Прогон AudioPreprocessVADPipeline на аудиопримере из репозитория:
     - Проверка типа возвращаемого AudioPipelineResult
     - Проверка 1D float32 моно
     - Проверка непустых speech_segments

@@ -13,7 +13,7 @@ from stt import TranscriberConfig, get_transcriber
 from stt.api import app, get_stt_service
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-REAL_AUDIO_FILE = REPO_ROOT / "audio_preprocessing" / "input_test_call.mp3"
+TEST_AUDIO_FILE = REPO_ROOT / "testdata" / "synthetic_call.wav"
 
 
 @pytest.fixture(scope="session")
@@ -49,15 +49,15 @@ def test_health_endpoint(client: TestClient) -> None:
 
 def test_transcribe_upload_file_success(client: TestClient) -> None:
     """
-    2. POST /api/v1/transcribe с реальным файлом input_test_call.mp3 -> 200 OK,
+    2. POST /api/v1/transcribe с файлом synthetic_call.wav -> 200 OK,
     валидный TranscriptionResult, language == 'ru', непустые segments.
     """
-    assert REAL_AUDIO_FILE.is_file(), f"Тестовый аудиофайл не найден: {REAL_AUDIO_FILE}"
+    assert TEST_AUDIO_FILE.is_file(), f"Тестовый аудиофайл не найден: {TEST_AUDIO_FILE}"
 
-    with open(REAL_AUDIO_FILE, "rb") as f:
+    with open(TEST_AUDIO_FILE, "rb") as f:
         response = client.post(
             "/api/v1/transcribe",
-            files={"file": ("input_test_call.mp3", f, "audio/mpeg")},
+            files={"file": ("synthetic_call.wav", f, "audio/wav")},
             data={
                 "language": "ru",
                 "beam_size": 5,
@@ -119,15 +119,15 @@ def test_transcribe_upload_empty_file(client: TestClient) -> None:
 
 def test_transcribe_by_path_success(client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
-    5. POST /api/v1/transcribe/by-path с путем к реальному файлу -> 200 OK,
+    5. POST /api/v1/transcribe/by-path с путём к тестовому файлу -> 200 OK,
     валидный TranscriptionResult.
     """
-    assert REAL_AUDIO_FILE.is_file(), f"Тестовый аудиофайл не найден: {REAL_AUDIO_FILE}"
+    assert TEST_AUDIO_FILE.is_file(), f"Тестовый аудиофайл не найден: {TEST_AUDIO_FILE}"
 
     monkeypatch.setenv("AUDIO_SHARED_ROOT", str(tmp_path))
     monkeypatch.setenv("AUDIO_SHARED_TOKEN", "test-token")
-    source = tmp_path / REAL_AUDIO_FILE.name
-    source.write_bytes(REAL_AUDIO_FILE.read_bytes())
+    source = tmp_path / TEST_AUDIO_FILE.name
+    source.write_bytes(TEST_AUDIO_FILE.read_bytes())
     payload = {
         "file_path": str(source),
         "language": "ru",
@@ -189,12 +189,12 @@ def test_transcribe_swagger_placeholder_initial_prompt_sanitized(client: TestCli
     8. POST /api/v1/transcribe с initial_prompt='string' (дефолтный плейсхолдер Swagger UI).
     Проверка, что плейсхолдер заменяется на None и распознавание проходит штатно.
     """
-    assert REAL_AUDIO_FILE.is_file(), f"Тестовый аудиофайл не найден: {REAL_AUDIO_FILE}"
+    assert TEST_AUDIO_FILE.is_file(), f"Тестовый аудиофайл не найден: {TEST_AUDIO_FILE}"
 
-    with open(REAL_AUDIO_FILE, "rb") as f:
+    with open(TEST_AUDIO_FILE, "rb") as f:
         response = client.post(
             "/api/v1/transcribe",
-            files={"file": ("input_test_call.mp3", f, "audio/mpeg")},
+            files={"file": ("synthetic_call.wav", f, "audio/wav")},
             data={
                 "language": "ru",
                 "beam_size": 1,
@@ -212,7 +212,7 @@ def test_by_path_requires_authorization_and_confines_paths(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     endpoint = "/api/v1/transcribe/by-path"
-    payload = {"file_path": str(REAL_AUDIO_FILE)}
+    payload = {"file_path": str(TEST_AUDIO_FILE)}
     monkeypatch.delenv("AUDIO_SHARED_ROOT", raising=False)
     monkeypatch.delenv("AUDIO_SHARED_TOKEN", raising=False)
     assert client.post(endpoint, json=payload).status_code == 403

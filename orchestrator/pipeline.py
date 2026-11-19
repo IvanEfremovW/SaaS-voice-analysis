@@ -190,7 +190,7 @@ class CallProcessingPipeline:
             raw_result = self.transcriber.transcribe(speech_only_audio, **transcribe_kwargs)
 
             # Восстановление временных границ на шкалу исходного звонка
-            if self.remap_timestamps and speech_segments:
+            if self.remap_timestamps:
                 logger.debug("Пересчет таймкодов транскрибации на шкалу исходного звонка (%.2f сек)...", orig_duration)
                 return remap_transcription_result(
                     result=raw_result,

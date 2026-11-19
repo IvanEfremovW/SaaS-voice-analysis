@@ -23,7 +23,7 @@ from audio_preprocessing.pipeline import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-REAL_AUDIO_FILE = REPO_ROOT / "audio_preprocessing" / "input_test_call.mp3"
+TEST_AUDIO_FILE = REPO_ROOT / "testdata" / "synthetic_call.wav"
 
 
 @pytest.fixture(scope="session")
@@ -54,15 +54,15 @@ def test_health_endpoint(client: TestClient) -> None:
 
 def test_preprocess_upload_file_success(client: TestClient) -> None:
     """
-    2. POST /api/v1/preprocess с input_test_call.mp3 и include_audio_base64=True -> 200 OK,
+    2. POST /api/v1/preprocess с synthetic_call.wav и include_audio_base64=True -> 200 OK,
     проверка speech_segments, retention_pct > 0, валидное декодирование audio_wav_base64.
     """
-    assert REAL_AUDIO_FILE.is_file(), f"Тестовый аудиофайл не найден: {REAL_AUDIO_FILE}"
+    assert TEST_AUDIO_FILE.is_file(), f"Тестовый аудиофайл не найден: {TEST_AUDIO_FILE}"
 
-    with open(REAL_AUDIO_FILE, "rb") as f:
+    with open(TEST_AUDIO_FILE, "rb") as f:
         response = client.post(
             "/api/v1/preprocess",
-            files={"file": ("input_test_call.mp3", f, "audio/mpeg")},
+            files={"file": ("synthetic_call.wav", f, "audio/wav")},
             data={"include_audio_base64": "true"},
         )
 
@@ -125,13 +125,13 @@ def test_preprocess_by_path_with_output_wav(client: TestClient, tmp_path: Path, 
     5. POST /api/v1/preprocess/by-path с сохранением в output_wav_path -> 200 OK,
     проверка создания выходного WAV и чтения через soundfile.
     """
-    assert REAL_AUDIO_FILE.is_file(), f"Тестовый аудиофайл не найден: {REAL_AUDIO_FILE}"
+    assert TEST_AUDIO_FILE.is_file(), f"Тестовый аудиофайл не найден: {TEST_AUDIO_FILE}"
 
     out_wav = tmp_path / "speech_only.wav"
     monkeypatch.setenv("AUDIO_SHARED_ROOT", str(tmp_path))
     monkeypatch.setenv("AUDIO_SHARED_TOKEN", "test-token")
-    source = tmp_path / REAL_AUDIO_FILE.name
-    source.write_bytes(REAL_AUDIO_FILE.read_bytes())
+    source = tmp_path / TEST_AUDIO_FILE.name
+    source.write_bytes(TEST_AUDIO_FILE.read_bytes())
     payload = {
         "file_path": str(source),
         "output_wav_path": str(out_wav),
@@ -215,7 +215,7 @@ def test_by_path_requires_authorization_and_confines_paths(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     endpoint = "/api/v1/preprocess/by-path"
-    payload = {"file_path": str(REAL_AUDIO_FILE)}
+    payload = {"file_path": str(TEST_AUDIO_FILE)}
     monkeypatch.delenv("AUDIO_SHARED_ROOT", raising=False)
     monkeypatch.delenv("AUDIO_SHARED_TOKEN", raising=False)
     assert client.post(endpoint, json=payload).status_code == 403

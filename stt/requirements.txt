@@ -1,3 +1,5 @@
+-c ../constraints.txt
+
 # Зависимости модуля транскрибации речи (Speech-to-Text, STT)
 # faster-whisper работает на ctranslate2 и не требует PyTorch
 faster-whisper>=1.1.0

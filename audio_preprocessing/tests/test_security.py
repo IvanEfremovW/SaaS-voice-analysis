@@ -83,7 +83,7 @@ def test_vad_concurrent_calls_match_sequential_results():
     from concurrent.futures import ThreadPoolExecutor
     from vad import SileroVADAdapter
 
-    source = Path(__file__).resolve().parents[2] / "vad" / "benchmark_reference.wav"
+    source = Path(__file__).resolve().parents[2] / "testdata" / "synthetic_call.wav"
     audio, sample_rate = sf.read(source, dtype="float32")
     inputs = [np.roll(audio[:160000], shift) for shift in (0, 8000, 16000, 32000)]
     vad = SileroVADAdapter()
@@ -151,3 +151,19 @@ def test_http_concurrency_limit_releases_capacity():
             assert (await client.post("/wait")).status_code == 200
 
     asyncio.run(scenario())
+
+
+def test_pcm_mixing_preserves_duration_and_level(tmp_path):
+    from audio_preprocessing.pipeline import AudioPipelineConfig, get_audio_pipeline
+    from orchestrator.loaders import LocalMockAudioLoader
+
+    path = tmp_path / "surround.wav"
+    sf.write(path, np.zeros((22050, 4), dtype=np.float32), 22050)
+    audio, sr = LocalMockAudioLoader().load(path)
+    assert audio.shape == (16000,)
+    assert sr == 16000
+
+    stereo = np.full((16000, 2), 1000, dtype=np.int16)
+    pipeline = get_audio_pipeline(AudioPipelineConfig(denoiser=None, vad=None))
+    result = pipeline.process_detailed(stereo)
+    np.testing.assert_allclose(result.speech_only_audio, 1000 / 32767)

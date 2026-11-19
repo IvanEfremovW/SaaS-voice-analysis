@@ -1,7 +1,6 @@
 """Локальный интерфейс транскрибации записей звонков."""
 
 import logging
-import os
 from pathlib import Path
 from threading import Lock
 from time import perf_counter
@@ -11,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from audio_http import AudioUploadLimit
+from stt import get_transcriber
 from stt.api import get_stt_service, transcribe_file
 from stt.interfaces import BaseTranscriber, TranscriptionResult
 
@@ -33,10 +33,7 @@ def get_tone_service() -> BaseTranscriber:
     global _tone
     with _tone_lock:
         if _tone is None:
-            from .tone_transcriber import ToneTranscriber
-
-            model_path = os.getenv("TONE_MODEL_PATH")
-            _tone = ToneTranscriber(Path(model_path) if model_path else None)
+            _tone = get_transcriber("t-one")
         return _tone
 
 
@@ -92,4 +89,6 @@ def transcribe_variant(variant_id: str, file: UploadFile) -> DemoResult:
             raise HTTPException(503, "Вариант недоступен. Проверьте зависимости и веса модели.") from error
 
 
-app.mount("/", StaticFiles(directory=Path(__file__).with_name("dist"), html=True))
+dist = Path(__file__).with_name("dist")
+if dist.is_dir():
+    app.mount("/", StaticFiles(directory=dist, html=True))
