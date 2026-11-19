@@ -5,11 +5,13 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from secrets import token_urlsafe
 from tempfile import NamedTemporaryFile
 from typing import BinaryIO, Literal
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, UploadFile
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from audio_http import (
@@ -22,15 +24,17 @@ from stt.variants import load_variants
 from .broker import CeleryJobQueue, JobQueue, create_celery, publish_pending
 from .config import JobSettings
 from .models import ByPathRequest, Detector, Device, JobOptions, JobRequest, JobVariant, Mode, resolve_options
-from .store import Job, JobStore, SQLiteJobStore
+from .store import Job, JobQuotaExceeded, JobStore, token_digest
 
 logger = logging.getLogger(__name__)
+job_bearer = HTTPBearer(auto_error=False, scheme_name="JobBearer")
 
 
 class JobAccepted(BaseModel):
     job_id: UUID
     status: Literal["queued"] = "queued"
     status_url: str
+    access_token: str
 
 
 def create_app(
@@ -47,8 +51,9 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        job_store = store or settings.open_store()
         audio_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        job_store = store or SQLiteJobStore(settings.db_path)
+        audio_dir.chmod(0o700)
         job_queue = queue or CeleryJobQueue(create_celery(settings.broker_url))
         app.state.job_store = job_store
         stop = asyncio.Event()
@@ -56,6 +61,7 @@ def create_app(
         async def publisher() -> None:
             while not stop.is_set():
                 try:
+                    await asyncio.to_thread(job_store.maintain)
                     await asyncio.to_thread(publish_pending, job_store, job_queue)
                 except Exception:
                     logger.exception("Не удалось опубликовать задания")
@@ -78,6 +84,7 @@ def create_app(
         source: BinaryIO, suffix: str, options: JobOptions, job_store: JobStore
     ) -> JobAccepted:
         job_id = uuid4()
+        access_token = token_urlsafe(32)
         target = audio_dir / f"{job_id}{suffix}"
         with NamedTemporaryFile(dir=audio_dir, suffix=suffix, delete=False) as upload:
             staged = Path(upload.name)
@@ -94,17 +101,28 @@ def create_app(
             validator.validate(staged)
             staged.replace(target)
             try:
-                job_store.create(job_id, target.name, options)
+                job_store.create(
+                    job_id, target.name, options,
+                    access_digest=token_digest(access_token), input_bytes=target.stat().st_size,
+                )
+            except JobQuotaExceeded:
+                target.unlink(missing_ok=True)
+                raise HTTPException(507, "Хранилище заданий заполнено") from None
             except Exception:
                 target.unlink(missing_ok=True)
                 raise
         finally:
             staged.unlink(missing_ok=True)
-        return JobAccepted(job_id=job_id, status_url=str(app.url_path_for("get_job", job_id=job_id)))
+        return JobAccepted(
+            job_id=job_id, status_url=str(app.url_path_for("get_job", job_id=job_id)), access_token=access_token,
+        )
 
-    @app.post("/api/v1/jobs", response_model=JobAccepted, status_code=202)
+    @app.post(
+        "/api/v1/jobs", response_model=JobAccepted, status_code=202,
+        responses={507: {"description": "Хранилище заданий заполнено"}},
+    )
     def submit_job(
-        file: UploadFile, request: Request, mode: Mode = Form("pipeline"),
+        file: UploadFile, request: Request, response: Response, mode: Mode = Form("pipeline"),
         variant_id: str | None = Form(None), device: Device | None = Form(None),
         vad: Detector | None = Form(None),
         language: str | None = Form(None), beam_size: int | None = Form(None, ge=1, le=10),
@@ -123,13 +141,15 @@ def create_app(
             "mode": mode, "include_audio_base64": include_audio_base64,
             **{key: value for key, value in optional.items() if value is not None},
         }), variants)
+        response.headers["Cache-Control"] = "no-store"
         return enqueue(file.file, suffix, options, request.app.state.job_store)
 
     @app.post(
         "/api/v1/jobs/by-path", response_model=JobAccepted, status_code=202,
         dependencies=[Depends(require_shared_access)],
+        responses={507: {"description": "Хранилище заданий заполнено"}},
     )
-    def submit_by_path(body: ByPathRequest, request: Request) -> JobAccepted:
+    def submit_by_path(body: ByPathRequest, request: Request, response: Response) -> JobAccepted:
         options = resolve_options(body, variants)
         path = shared_path(body.file_path, ALLOWED_AUDIO_EXTENSIONS)
         if options.output_wav_path is not None:
@@ -141,6 +161,7 @@ def create_app(
             options.output_wav_path = str(output)
         try:
             with path.open("rb") as source:
+                response.headers["Cache-Control"] = "no-store"
                 return enqueue(source, path.suffix.lower(), options, request.app.state.job_store)
         except FileNotFoundError:
             raise HTTPException(404, "Исходный аудиофайл не найден") from None
@@ -155,14 +176,26 @@ def create_app(
             for variant in variants.values()
         ]
 
-    @app.get("/api/v1/jobs/{job_id}", response_model=Job, response_model_exclude_none=True)
-    def get_job(job_id: UUID, request: Request, authorization: str | None = Header(None)) -> Job:
+    @app.get(
+        "/api/v1/jobs/{job_id}", response_model=Job, response_model_exclude_none=True,
+        responses={401: {"description": "Требуется токен задания"}, 404: {"description": "Задание не найдено"}},
+    )
+    def get_job(
+        job_id: UUID, request: Request, response: Response,
+        authorization: HTTPAuthorizationCredentials | None = Depends(job_bearer),
+    ) -> Job:
         job_store: JobStore = request.app.state.job_store
+        access = job_store.access(job_id)
+        if access is None:
+            raise HTTPException(404, "Задание не найдено")
+        if access.digest is None and access.legacy_shared:
+            require_shared_access(f"Bearer {authorization.credentials}" if authorization else None)
+        elif authorization is None or not access.accepts(authorization.credentials):
+            raise HTTPException(401, "Требуется токен задания", headers={"WWW-Authenticate": "Bearer"})
         job = job_store.get(job_id)
         if job is None:
             raise HTTPException(404, "Задание не найдено")
-        if job.shared_input:
-            require_shared_access(authorization)
+        response.headers["Cache-Control"] = "no-store"
         return job
 
     return app

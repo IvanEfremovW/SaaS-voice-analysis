@@ -12,7 +12,7 @@ from orchestrator.jobs.api import create_app
 from orchestrator.jobs.broker import publish_pending
 from orchestrator.jobs.config import JobSettings
 from orchestrator.jobs.execution import JobOutput
-from orchestrator.jobs.store import SQLiteJobStore
+from orchestrator.jobs.store import LEASE_SECONDS, SQLiteJobStore
 from orchestrator.jobs.worker import process_job
 from stt import TranscriptionResult
 
@@ -42,6 +42,12 @@ def settings(tmp_path):
     return JobSettings(tmp_path / "audio", tmp_path / "jobs.sqlite3", "memory://")
 
 
+def get_result(client, accepted):
+    return client.get(
+        accepted["status_url"], headers={"Authorization": f"Bearer {accepted['access_token']}"},
+    )
+
+
 def wait_for_publish(queue):
     deadline = time.monotonic() + 5
     while not queue.published and time.monotonic() < deadline:
@@ -56,7 +62,7 @@ def test_http_job_survives_api_restart(settings, wav_bytes):
         assert reply.status_code == 202
         accepted = reply.json()
         assert accepted["status"] == "queued"
-        assert client.get(accepted["status_url"]).json()["status"] == "queued"
+        assert get_result(client, accepted).json()["status"] == "queued"
     assert not queue.published
 
     queue.available = True
@@ -68,7 +74,7 @@ def test_http_job_survives_api_restart(settings, wav_bytes):
 
         def transcribe(_job_id, path: Path, _options) -> JobOutput:
             assert path.name == f"{job_id}.wav"
-            assert client.get(accepted["status_url"]).json()["status"] == "running"
+            assert get_result(client, accepted).json()["status"] == "running"
             return JobOutput(result=TranscriptionResult(
                 text="Привет", language="ru", language_probability=1, duration=1, segments=[],
             ))
@@ -77,7 +83,7 @@ def test_http_job_survives_api_restart(settings, wav_bytes):
         validator = PyAVInputValidator()
         process_job(job_id, settings.audio_dir, store, validator, transcribe)
         process_job(job_id, settings.audio_dir, store, validator, lambda *_: pytest.fail("Задание не должно выполняться"))
-        job = client.get(accepted["status_url"]).json()
+        job = get_result(client, accepted).json()
         assert job["status"] == "succeeded"
         assert job["result"]["text"] == "Привет"
 
@@ -101,12 +107,14 @@ def test_failed_publish_keeps_job_pending(settings):
 
 
 def test_worker_counts_interruption_and_processing_failures(settings, wav_bytes):
-    store = SQLiteJobStore(settings.db_path)
+    now = 1000.0
+    store = SQLiteJobStore(settings.db_path, clock=lambda: now)
     job_id = uuid4()
     settings.audio_dir.mkdir()
     (settings.audio_dir / "call.wav").write_bytes(wav_bytes)
     store.create(job_id, "call.wav")
     assert store.claim(job_id).filename == "call.wav"  # Началась попытка, воркер завершился.
+    now += LEASE_SECONDS + 1
     attempts = []
 
     def transcribe(_job_id, path, _options):
@@ -182,7 +190,7 @@ def test_job_modes_and_variant_snapshot(settings, wav_bytes, monkeypatch):
             monkeypatch.setenv("DEMO_VARIANTS_CONFIG", str(settings.audio_dir / "missing.json"))
             process_job(job_id, settings.audio_dir, store, PyAVInputValidator())
             monkeypatch.delenv("DEMO_VARIANTS_CONFIG")
-            result = client.get(response.json()["status_url"]).json()
+            result = get_result(client, response.json()).json()
             assert result["status"] == "succeeded"
             assert ("preprocessing" in result) == (mode != "stt")
             assert ("result" in result) == (mode != "vad")
@@ -208,7 +216,7 @@ def test_job_rejects_unsupported_options_and_unavailable_cuda(settings, wav_byte
         )
         assert r.status_code == 202
         process_job(UUID(r.json()["job_id"]), settings.audio_dir, store, PyAVInputValidator())
-        assert client.get(r.json()["status_url"]).json()["error"] == "CUDA недоступна на воркере"
+        assert get_result(client, r.json()).json()["error"] == "CUDA недоступна на воркере"
 
 
 def test_job_by_path_protects_results_and_wav(settings, wav_bytes, tmp_path, monkeypatch):
@@ -230,7 +238,7 @@ def test_job_by_path_protects_results_and_wav(settings, wav_bytes, tmp_path, mon
         assert client.get(r.json()["status_url"]).status_code == 401
         (tmp_path / "call.wav").unlink()
         process_job(UUID(r.json()["job_id"]), settings.audio_dir, store, PyAVInputValidator())
-        job = client.get(r.json()["status_url"], headers=auth).json()
+        job = get_result(client, r.json()).json()
         assert job["status"] == "succeeded"
         assert base64.b64decode(job["preprocessing"]["audio_wav_base64"]) == (tmp_path / "speech.wav").read_bytes()
         (tmp_path / "call.wav").write_bytes(wav_bytes)
@@ -271,3 +279,87 @@ def test_migrates_old_sqlite_job(settings, wav_bytes):
 
     process_job(old_id, settings.audio_dir, store, PyAVInputValidator(), execute)
     assert store.get(old_id).status == "succeeded"
+
+
+def test_job_token_is_unique_and_quota_rejects_extra_upload(settings, wav_bytes):
+    from dataclasses import replace
+
+    settings = replace(settings, max_jobs=2)
+    with TestClient(create_app(settings, queue=RecordedQueue())) as client:
+        def submit():
+            return client.post("/api/v1/jobs", files={"file": ("call.wav", wav_bytes)})
+
+        first, second = submit().json(), submit().json()
+        assert first["access_token"] != second["access_token"]
+        assert client.get(first["status_url"]).status_code == 401
+        assert client.get(first["status_url"], headers={
+            "Authorization": f"Bearer {second['access_token']}",
+        }).status_code == 401
+        assert get_result(client, first).status_code == 200
+        assert submit().status_code == 507
+        assert len(list(settings.audio_dir.iterdir())) == 2
+        assert settings.db_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_claim_is_exclusive_and_expired_worker_cannot_publish(settings, wav_bytes):
+    now = 1000.0
+    store = SQLiteJobStore(settings.db_path, audio_dir=settings.audio_dir, retention_seconds=200, clock=lambda: now)
+    settings.audio_dir.mkdir()
+    source = settings.audio_dir / "call.wav"
+    source.write_bytes(wav_bytes)
+    job_id = uuid4()
+    store.create(job_id, source.name, input_bytes=len(wav_bytes))
+    first = store.claim(job_id)
+    assert first is not None
+    assert store.claim(job_id) is None
+    now += LEASE_SECONDS - 1
+    assert store.renew(job_id, first.attempt)
+    now += 2
+    assert store.claim(job_id) is None
+    now += LEASE_SECONDS
+    store.maintain()
+    assert store.pending() == [job_id]
+    second = store.claim(job_id)
+    assert second is not None and second.attempt != first.attempt
+    assert not store.finish(
+        job_id, first.attempt,
+        result=TranscriptionResult(text="", language="ru", language_probability=0, duration=1),
+        before_commit=lambda: pytest.fail("Просроченная попытка не может публиковать WAV"),
+    )
+    assert store.finish(job_id, second.attempt, error="Проверочная ошибка")
+    assert store.get(job_id).error == "Проверочная ошибка"
+    now += 201
+    store.maintain()
+    assert store.get(job_id) is None
+    assert not source.exists()
+
+
+@pytest.mark.parametrize(("extension", "codec"), [("m4a", "aac"), ("webm", "libopus")])
+def test_worker_decodes_accepted_container(settings, extension, codec):
+    import av
+    import numpy as np
+
+    rate = 48000
+    samples = np.zeros((1, rate), dtype=np.int16)
+    contents = io.BytesIO()
+    with av.open(contents, "w", format="mp4" if extension == "m4a" else extension) as output:
+        stream = output.add_stream(codec, rate=rate)
+        stream.layout = "mono"
+        frame = av.AudioFrame.from_ndarray(samples, format="s16", layout="mono")
+        frame.sample_rate = rate
+        for packet in stream.encode(frame):
+            output.mux(packet)
+        for packet in stream.encode(None):
+            output.mux(packet)
+
+    with TestClient(create_app(settings, queue=RecordedQueue())) as client:
+        response = client.post(
+            "/api/v1/jobs", data={"mode": "vad", "vad": "energy"},
+            files={"file": (f"call.{extension}", contents.getvalue())},
+        )
+        assert response.status_code == 202, response.text
+        accepted = response.json()
+        process_job(UUID(accepted["job_id"]), settings.audio_dir, SQLiteJobStore(settings.db_path))
+        result = get_result(client, accepted).json()
+        assert result["status"] == "succeeded", result
+        assert result["preprocessing"]["original_duration"] == pytest.approx(1.0, abs=0.06)

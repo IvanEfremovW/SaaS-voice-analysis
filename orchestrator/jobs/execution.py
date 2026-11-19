@@ -13,6 +13,7 @@ from uuid import UUID
 import soundfile as sf
 from fastapi import HTTPException
 
+from audio_decode import AudioDecodeError
 from audio_http import shared_path
 from audio_preprocessing import (
     AudioPipelineConfig, AudioPipelineResult, AudioPreprocessVADPipeline, get_audio_pipeline,
@@ -30,7 +31,7 @@ from .models import Detector, JobOptions, legacy_options
 class JobOutput:
     result: TranscriptionResult | None = None
     preprocessing: PreprocessResponse | None = None
-    staged_wav: Path | None = None
+    wav_to_publish: bytes | None = None
 
 
 class JobFailure(RuntimeError):
@@ -101,28 +102,31 @@ def publish_wav(job_id: UUID, destination: Path, wav: bytes) -> Path:
 
 def execute_job(job_id: UUID, path: Path, saved_options: JobOptions | None) -> JobOutput:
     options = saved_options if saved_options is not None else legacy_options()
-    preparation: AudioPipelineResult | None = None
-    if options.mode != "stt":
+    try:
         audio, sr = LocalMockAudioLoader().load(path)
+    except AudioDecodeError as error:
+        raise JobFailure(str(error)) from error
+    preparation = None
+    if options.mode != "stt":
         preparation = get_preprocessor(options.vad).process_detailed(audio, sr=sr)
 
     transcript = None
     if options.mode != "vad":
-        device = "cuda" if options.device == "gpu" else options.device
-        service = get_job_transcriber(
-            options.engine, options.model_size, device, options.compute_type,
-            saved_options is not None and options.device == "gpu",
-        )
-        if preparation is not None and saved_options is not None and not preparation.speech_only_audio.size:
+        if preparation is not None and not preparation.speech_only_audio.size:
             transcript = TranscriptionResult(
                 text="", language=str(options.stt_options.get("language", "ru") or "unknown"),
                 language_probability=0, duration=preparation.original_duration,
                 segments=[],
             )
         else:
-            source = preparation.speech_only_audio if preparation is not None else path
+            device = "cuda" if options.device == "gpu" else options.device
+            service = get_job_transcriber(
+                options.engine, options.model_size, device, options.compute_type,
+                saved_options is not None and options.device == "gpu",
+            )
+            source = preparation.speech_only_audio if preparation is not None else audio
             transcript = service.transcribe(source, **options.stt_options)
-            if preparation is not None and preparation.speech_segments:
+            if preparation is not None:
                 transcript = remap_transcription_result(
                     transcript, preparation.speech_segments, preparation.original_duration,
                 )
@@ -132,17 +136,9 @@ def execute_job(job_id: UUID, path: Path, saved_options: JobOptions | None) -> J
 
     output_path = options.output_wav_path
     audio_base64 = None
-    staged_wav = None
+    wav = None
     if output_path is not None or options.include_audio_base64:
         wav = encode_wav(preparation)
-        if output_path is not None:
-            destination = shared_path(output_path, {".wav"}, output=True)
-            if not destination.parent.is_dir():
-                raise HTTPException(400, "Выходной каталог должен существовать")
-            staged_wav = publish_wav(job_id, destination, wav)
-            output_path = str(destination)
-            if options.include_audio_base64:
-                wav = staged_wav.read_bytes()
         if options.include_audio_base64:
             audio_base64 = base64.b64encode(wav).decode("ascii")
 
@@ -158,5 +154,22 @@ def execute_job(job_id: UUID, path: Path, saved_options: JobOptions | None) -> J
             output_wav_path=output_path,
             audio_wav_base64=audio_base64,
         ),
-        staged_wav=staged_wav,
+        wav_to_publish=wav if output_path is not None else None,
     )
+
+
+def publish_job_output(job_id: UUID, output: JobOutput) -> tuple[PreprocessResponse, Path]:
+    prep = output.preprocessing
+    if prep is None or prep.output_wav_path is None or output.wav_to_publish is None:
+        raise ValueError("Нет WAV для публикации")
+    destination = shared_path(prep.output_wav_path, {".wav"}, output=True)
+    if not destination.parent.is_dir():
+        raise HTTPException(400, "Выходной каталог должен существовать")
+    staged = publish_wav(job_id, destination, output.wav_to_publish)
+    return prep.model_copy(update={
+        "output_wav_path": str(destination),
+        "audio_wav_base64": (
+            base64.b64encode(staged.read_bytes()).decode("ascii")
+            if prep.audio_wav_base64 is not None else None
+        ),
+    }), staged

@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
+from audio_decode import check_resampling_cost, mono_float32
 from pydantic import BaseModel, ConfigDict, Field
 
 try:
@@ -191,29 +192,11 @@ class AudioPreprocessVADPipeline:
                     retention_pct=0.0,
                 )
 
-            # Микширование в моно
-            if audio.ndim == 2:
-                if audio.shape[0] in (1, 2) and audio.shape[1] > audio.shape[0]:
-                    audio = np.mean(audio, axis=0)
-                elif audio.shape[1] in (1, 2) and audio.shape[0] > audio.shape[1]:
-                    audio = np.mean(audio, axis=1)
-                else:
-                    audio = audio.flatten()
-            elif audio.ndim > 2:
-                audio = audio.flatten()
-
-            # Нормализация типов
-            if np.issubdtype(audio.dtype, np.integer):
-                max_val = float(np.iinfo(audio.dtype).max)
-                audio = (audio / max_val).astype(np.float32)
-            elif audio.dtype != np.float32:
-                audio = audio.astype(np.float32)
-
-            # Ограничение диапазона амплитуды
-            audio = np.clip(audio, -1.0, 1.0)
+            audio = mono_float32(audio)
 
             # Ресемплинг при несовпадении частоты
             if sr != target_sr and len(audio) > 0:
+                check_resampling_cost(sr, target_sr)
                 import torch
                 import torchaudio
                 resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=target_sr)

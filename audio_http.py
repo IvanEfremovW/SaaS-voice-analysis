@@ -9,6 +9,8 @@ from fastapi import Header, HTTPException
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from audio_decode import AudioDecodeError, AudioDecoder, AudioLimitError, PyAVAudioDecoder
+
 MAX_UPLOAD_BYTES = 32 * 1024 * 1024
 
 
@@ -82,26 +84,17 @@ class AudioInputValidator(Protocol):
 class PyAVInputValidator(AudioInputValidator):
     """Проверяет фактический объём потока до передачи в декодер модели."""
 
-    def __init__(self, max_seconds: float = 1800, max_samples: int = 64_000_000) -> None:
-        self.max_seconds = max_seconds
-        self.max_samples = max_samples
+    def __init__(
+        self, max_seconds: float = 1800, max_samples: int = 64_000_000,
+        *, decoder: AudioDecoder | None = None, target_sr: int = 16000,
+    ) -> None:
+        self.decoder = decoder or PyAVAudioDecoder(max_seconds, max_samples)
+        self.target_sr = target_sr
 
     def validate(self, path: Path) -> None:
-        import av
-
-        seconds = 0.0
-        samples = 0
         try:
-            with av.open(str(path), options={"protocol_whitelist": "file,pipe,crypto,data"}) as container:
-                if not container.streams.audio:
-                    raise HTTPException(400, "Файл не содержит аудиопотока")
-                for frame in container.decode(audio=0):
-                    channels = len(frame.layout.channels)
-                    if not 0 < frame.sample_rate <= 192000 or not 0 < channels <= 8:
-                        raise HTTPException(400, "Неподдерживаемые параметры аудиопотока")
-                    seconds += frame.samples / frame.sample_rate
-                    samples += frame.samples * channels
-                    if seconds > self.max_seconds or samples > self.max_samples:
-                        raise HTTPException(413, "Превышен лимит декодированного аудио")
-        except (av.error.FFmpegError, OSError, ValueError):
-            raise HTTPException(400, "Не удалось декодировать аудиофайл") from None
+            self.decoder.inspect(path, self.target_sr)
+        except AudioLimitError as error:
+            raise HTTPException(413, str(error)) from None
+        except AudioDecodeError as error:
+            raise HTTPException(400, str(error)) from None

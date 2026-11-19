@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Optional, Tuple, Union
 import numpy as np
-import soundfile as sf
+from audio_decode import AudioDecoder, PyAVAudioDecoder
 
 from .interfaces import BaseAudioLoader
 
@@ -24,6 +24,7 @@ class LocalMockAudioLoader(BaseAudioLoader):
         self,
         base_dir: Optional[Union[str, Path]] = None,
         target_sr: Optional[int] = 16000,
+        decoder: AudioDecoder | None = None,
     ) -> None:
         """
         :param base_dir: Базовая директория поиска аудиофайлов (если передан относительный путь или ID).
@@ -31,6 +32,7 @@ class LocalMockAudioLoader(BaseAudioLoader):
         """
         self.base_dir = Path(base_dir).resolve() if base_dir is not None else None
         self.target_sr = target_sr
+        self.decoder = decoder or PyAVAudioDecoder()
 
     def _resolve_path(self, call_id_or_path: Union[str, Path]) -> Path:
         """
@@ -70,44 +72,4 @@ class LocalMockAudioLoader(BaseAudioLoader):
         file_path = self._resolve_path(call_id_or_path)
         logger.debug("Загрузка аудиозаписи звонка из %s", file_path)
 
-        try:
-            data, sr = sf.read(str(file_path), dtype="float32")
-        except Exception as e:
-            logger.warning("Ошибка чтения через soundfile: %s. Попытка через torchaudio...", e)
-            import torchaudio
-            tensor, sr = torchaudio.load(str(file_path))
-            data = tensor.numpy()
-
-        # Приведение к 1D моно
-        if data.ndim == 2:
-            if data.shape[0] in (1, 2) and data.shape[1] > data.shape[0]:
-                data = np.mean(data, axis=0)
-            elif data.shape[1] in (1, 2) and data.shape[0] > data.shape[1]:
-                data = np.mean(data, axis=1)
-            else:
-                data = data.flatten()
-        elif data.ndim > 2:
-            data = data.flatten()
-
-        # Нормализация типов
-        if np.issubdtype(data.dtype, np.integer):
-            max_val = float(np.iinfo(data.dtype).max)
-            data = (data / max_val).astype(np.float32)
-        elif data.dtype != np.float32:
-            data = data.astype(np.float32)
-
-        # Ограничение диапазона амплитуды
-        data = np.clip(data, -1.0, 1.0)
-
-        # Ресемплинг к target_sr, если требуется
-        if self.target_sr is not None and sr != self.target_sr and len(data) > 0:
-            import torch
-            import torchaudio
-            resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=self.target_sr)
-            tensor = torch.from_numpy(data).unsqueeze(0)
-            data = resampler(tensor).squeeze(0).numpy().astype(np.float32)
-            np.clip(data, -1.0, 1.0, out=data)
-            sr = self.target_sr
-
-        logger.debug("Аудио успешно загружено: shape=%s, sr=%d, duration=%.2f сек", data.shape, sr, len(data) / sr)
-        return data, int(sr)
+        return self.decoder.decode(file_path, self.target_sr)

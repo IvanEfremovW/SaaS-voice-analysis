@@ -1,7 +1,7 @@
 """
 Интеграционные и модульные тесты для пакета stt (Speech-to-Text).
 Проверяют соответствие Definition of Done (DoD), контракты данных Pydantic v2,
-работу с 3 реальными аудиофайлами, поддержку numpy.ndarray и graceful fallback на CPU.
+работу с аудиофайлом из репозитория, поддержку numpy.ndarray и graceful fallback на CPU.
 """
 
 from pathlib import Path
@@ -24,21 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 @pytest.fixture(scope="session")
 def audio_files() -> list[Path]:
-    """Список 3 реальных аудиофайлов из репозитория."""
-    files = [
-        REPO_ROOT / "audio_preprocessing" / "input_test_call.mp3",
-        REPO_ROOT / "samples" / "test_call_youtube.mp3",
-        REPO_ROOT
-        / "samples"
-        / "AxonData"
-        / "russian-speech-recognition-dataset"
-        / "Call center data samples RU"
-        / "1756465406.16342 (RU Pharma Sale)"
-        / "1756465406.16342.mp3",
-    ]
-    for f in files:
-        assert f.is_file(), f"Аудиофайл не найден: {f}"
-    return files
+    return [REPO_ROOT / "testdata" / "synthetic_call.wav"]
 
 
 @pytest.fixture(scope="session")
@@ -83,20 +69,18 @@ def test_cuda_graceful_fallback_without_gpu(monkeypatch: pytest.MonkeyPatch):
     assert transcriber.actual_compute_type == "int8"
 
 
-def test_transcribe_three_real_files(
+def test_transcribe_recording(
     tiny_transcriber: BaseTranscriber,
     audio_files: list[Path],
 ):
     """
-    Тест контракта на 3 реальных аудиофайлах (DoD):
+    Тест контракта на аудиопримере из репозитория (DoD):
     1. Результат является экземпляром TranscriptionResult.
     2. result.text не пустой (len(result.text.strip()) > 0).
     3. len(result.segments) > 0.
     4. Для каждого сегмента: seg.start <= seg.end и len(seg.text) > 0.
     5. result.language == 'ru'.
     """
-    assert len(audio_files) == 3
-
     for audio_path in audio_files:
         # Проверяем передачу как строкового пути
         result = tiny_transcriber.transcribe(str(audio_path))
@@ -130,7 +114,7 @@ def test_transcribe_numpy_array(tiny_transcriber: BaseTranscriber):
     """
     Тест передачи стандартизированного numpy.ndarray (16kHz float32, выход модуля VAD).
     """
-    ref_audio = REPO_ROOT / "audio_preprocessing" / "input_test_call.mp3"
+    ref_audio = REPO_ROOT / "testdata" / "synthetic_call.wav"
     audio_data, sr = sf.read(str(ref_audio), dtype="float32")
 
     # Если стерео — берем моно

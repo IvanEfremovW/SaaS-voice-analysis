@@ -20,6 +20,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/JobAccepted'
+        '507':
+          description: Хранилище заданий заполнено
         '422':
           description: Validation Error
           content:
@@ -52,6 +54,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/JobAccepted'
+        '507':
+          description: Хранилище заданий заполнено
         '422':
           description: Validation Error
           content:
@@ -76,6 +80,8 @@ paths:
     get:
       summary: Get Job
       operationId: get_job_api_v1_jobs__job_id__get
+      security:
+      - JobBearer: []
       parameters:
       - name: job_id
         in: path
@@ -84,14 +90,6 @@ paths:
           type: string
           format: uuid
           title: Job Id
-      - name: authorization
-        in: header
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Authorization
       responses:
         '200':
           description: Successful Response
@@ -99,6 +97,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Job'
+        '401':
+          description: Требуется токен задания
+        '404':
+          description: Задание не найдено
         '422':
           description: Validation Error
           content:
@@ -308,10 +310,14 @@ components:
         status_url:
           type: string
           title: Status Url
+        access_token:
+          type: string
+          title: Access Token
       type: object
       required:
       - job_id
       - status_url
+      - access_token
       title: JobAccepted
     JobVariant:
       properties:
@@ -585,3 +591,7 @@ components:
       - msg
       - type
       title: ValidationError
+  securitySchemes:
+    JobBearer:
+      type: http
+      scheme: bearer

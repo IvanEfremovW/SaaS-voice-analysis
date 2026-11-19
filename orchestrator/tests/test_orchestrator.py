@@ -30,7 +30,7 @@ from stt.api import app as stt_app, get_stt_service
 from stt.interfaces import TranscriptionResult, TranscriptionSegment, TranscriptionWord
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-REAL_AUDIO_FILE = REPO_ROOT / "audio_preprocessing" / "input_test_call.mp3"
+TEST_AUDIO_FILE = REPO_ROOT / "testdata" / "synthetic_call.wav"
 
 
 @pytest.fixture(scope="session")
@@ -95,7 +95,7 @@ def test_orchestrator_with_preprocessing_enabled(tiny_transcriber: FasterWhisper
     - В STT передается только speech_only_audio
     - Таймкоды восстанавливаются на шкалу исходного аудио
     """
-    assert REAL_AUDIO_FILE.is_file(), f"Тестовый файл не найден: {REAL_AUDIO_FILE}"
+    assert TEST_AUDIO_FILE.is_file(), f"Тестовый файл не найден: {TEST_AUDIO_FILE}"
 
     loader = LocalMockAudioLoader(base_dir=REPO_ROOT)
     preprocessor = get_audio_pipeline()
@@ -107,12 +107,12 @@ def test_orchestrator_with_preprocessing_enabled(tiny_transcriber: FasterWhisper
         remap_timestamps=True,
     )
 
-    result = pipeline.run(REAL_AUDIO_FILE, language="ru")
+    result = pipeline.run(TEST_AUDIO_FILE, language="ru")
 
     assert isinstance(result, TranscriptionResult)
     assert len(result.text.strip()) > 0
     assert len(result.segments) > 0
-    assert result.duration > 30.0  # Исходная длина аудио ~35 сек
+    assert result.duration == pytest.approx(8.245, abs=0.01)
 
     for seg in result.segments:
         assert isinstance(seg, TranscriptionSegment)
@@ -127,7 +127,7 @@ def test_orchestrator_with_preprocessing_disabled(tiny_transcriber: FasterWhispe
     - Сырое аудио направляется напрямую в STT
     - STT возвращает результат без ремаппинга таймкодов
     """
-    assert REAL_AUDIO_FILE.is_file(), f"Тестовый файл не найден: {REAL_AUDIO_FILE}"
+    assert TEST_AUDIO_FILE.is_file(), f"Тестовый файл не найден: {TEST_AUDIO_FILE}"
 
     loader = LocalMockAudioLoader(base_dir=REPO_ROOT)
 
@@ -138,7 +138,7 @@ def test_orchestrator_with_preprocessing_disabled(tiny_transcriber: FasterWhispe
         remap_timestamps=False,
     )
 
-    result = pipeline.run(REAL_AUDIO_FILE, language="ru")
+    result = pipeline.run(TEST_AUDIO_FILE, language="ru")
 
     assert isinstance(result, TranscriptionResult)
     assert len(result.text.strip()) > 0
@@ -151,7 +151,7 @@ def test_orchestrator_via_rest_api_clients(tiny_transcriber: FasterWhisperTransc
     Тест работы CallProcessingPipeline через сетевые REST API клиенты:
     RestPreprocessorClient и RestTranscriberClient поверх FastAPI TestClient.
     """
-    assert REAL_AUDIO_FILE.is_file(), f"Тестовый файл не найден: {REAL_AUDIO_FILE}"
+    assert TEST_AUDIO_FILE.is_file(), f"Тестовый файл не найден: {TEST_AUDIO_FILE}"
 
     # Переопределяем сервис STT в FastAPI на легкий tiny инстанс для быстроты теста
     stt_app.dependency_overrides[get_stt_service] = lambda: tiny_transcriber
@@ -169,12 +169,12 @@ def test_orchestrator_via_rest_api_clients(tiny_transcriber: FasterWhisperTransc
                 remap_timestamps=True,
             )
 
-            result = pipeline.run(REAL_AUDIO_FILE, language="ru")
+            result = pipeline.run(TEST_AUDIO_FILE, language="ru")
 
             assert isinstance(result, TranscriptionResult)
             assert len(result.text.strip()) > 0
             assert len(result.segments) > 0
-            assert result.duration > 30.0
+            assert result.duration == pytest.approx(8.245, abs=0.01)
             assert any(segment.words for segment in result.segments)
             assert result.utterances
 
@@ -270,3 +270,18 @@ def test_rest_preprocessor_normalizes_sample_rate():
         audio, segments = preprocessor.process(np.zeros(16000, dtype=np.float32))
     assert audio.shape == (16000,)
     assert segments == payload["speech_segments"]
+
+
+def test_silent_recording_keeps_original_duration(tmp_path: Path, tiny_transcriber: FasterWhisperTranscriber):
+    import soundfile as sf
+
+    path = tmp_path / "silence.wav"
+    sf.write(path, np.zeros(32000, dtype=np.float32), 16000)
+    pipeline = CallProcessingPipeline(
+        audio_loader=LocalMockAudioLoader(),
+        preprocessor=get_audio_pipeline(),
+        transcriber=tiny_transcriber,
+    )
+    result = pipeline.run(path)
+    assert result.duration == 2
+    assert result.segments == []

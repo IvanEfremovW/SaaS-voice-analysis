@@ -134,7 +134,7 @@ pytest audio_preprocessing/tests/ stt/tests/ orchestrator/tests/ -v
 
 ## 6. Асинхронная обработка через Celery и RabbitMQ
 
-Из корня репозитория установите зависимости командой
+Используйте Python 3.11 или новее. Из корня репозитория установите зависимости командой
 `python -m pip install -r requirements.txt` и запустите RabbitMQ.
 
 ```bash
@@ -151,9 +151,10 @@ python -m uvicorn orchestrator.jobs.api:app --host 127.0.0.1 --port 8003
 python -m celery -A orchestrator.jobs.worker:app worker --pool=solo --concurrency=1 --loglevel=INFO
 ```
 
-Локальная конфигурация рассчитана на один экземпляр API и один воркер.
+Запустите API и воркеры с общими путями к SQLite и каталогу входных записей.
 Воркера можно запустить после приёма записей. API возвращает HTTP 202 с
-`job_id`, `status` и `status_url` после сохранения файла и задания. Публикация
+`job_id`, `status`, `status_url` и `access_token`. Сохраните токен из ответа на
+POST. Для чтения статуса и результата передавайте его как Bearer-токен. Публикация
 в RabbitMQ идёт в фоне.
 
 ```bash
@@ -173,11 +174,12 @@ curl -fsS -F "file=@$AUDIO" -F mode=pipeline -F variant_id=vad_5s_beam1 \
   -F device=cpu -F beam_size=4 "$API/api/v1/jobs"
 
 curl -fsS "$API/api/v1/jobs/variants"
-curl -fsS "$API/api/v1/jobs/<job_id>"
+curl -fsS -H "Authorization: Bearer $JOB_ACCESS_TOKEN" "$API/api/v1/jobs/$JOB_ID"
 ```
 
 Задание проходит через состояния `queued`, `running`, `succeeded` или `failed`.
 При успехе `result` содержит расшифровку в режимах `stt` и `pipeline`.
+Установите `JOB_ID` и `JOB_ACCESS_TOKEN` из полей ответа на выбранный POST.
 В режимах `vad` и `pipeline` поле `preprocessing` содержит речевые интервалы
 относительно исходного файла, длительности и, по запросу, WAV в Base64.
 При ошибке `error` содержит причину.
@@ -195,8 +197,8 @@ T-one работает на CPU. Для него установите допол
 командой `python -m pip install -r demo/requirements.txt`.
 
 Для входа по пути задайте на API и воркере `AUDIO_SHARED_ROOT`. На API также
-задайте `AUDIO_SHARED_TOKEN`. Токен требуется при постановке задания и при
-получении его результата. Сервис сохраняет копию входного файла при постановке
+задайте `AUDIO_SHARED_TOKEN` для постановки задания. Ответ содержит отдельный
+`access_token` для чтения результата. Сервис сохраняет копию входного файла при постановке
 в очередь. Если задан `output_wav_path`, воркер публикует WAV в общем каталоге
 без перезаписи существующего файла.
 
@@ -215,6 +217,9 @@ curl -fsS -H "Authorization: Bearer $AUDIO_SHARED_TOKEN" \
 | `CELERY_BROKER_URL` | `amqp://transcription:transcription-local@127.0.0.1:5672//` |
 | `TRANSCRIPTION_AUDIO_DIR` | `output/jobs/audio` |
 | `TRANSCRIPTION_DB_PATH` | `output/jobs/jobs.sqlite3` |
+| `TRANSCRIPTION_MAX_JOBS` | 1000 заданий |
+| `TRANSCRIPTION_MAX_BYTES` | 2147483648 байт входных файлов, параметров и результатов |
+| `TRANSCRIPTION_RETENTION_SECONDS` | 604800 секунд (7 суток) |
 | `STT_ENGINE` | `faster-whisper` |
 | `STT_MODEL_SIZE` | `large-v3-turbo` |
 | `STT_COMPUTE_TYPE` | `int8` для CPU |
@@ -225,7 +230,22 @@ curl -fsS -H "Authorization: Bearer $AUDIO_SHARED_TOKEN" \
 API и воркера. При изменении `RABBITMQ_PORT` или `RABBITMQ_PASSWORD` в Compose задайте
 тот же адрес и учётные данные в `CELERY_BROKER_URL` для API и воркера.
 
-При падении воркера RabbitMQ доставляет неподтверждённое сообщение повторно.
-На обработку даётся до трёх попыток. API и воркер хранят аудио и расшифровки
-локально, до ручной очистки. Для проверки контракта и восстановления заданий
-запустите `python -m pytest orchestrator/tests/test_jobs.py -q`.
+Воркер продлевает право владения попыткой каждые 20 секунд. Если оно истекает,
+API повторно ставит задание в очередь. Сохранение результата проверяет номер
+попытки. На обработку даётся до трёх попыток.
+
+Каталог по умолчанию `output/jobs` закрыт правами `0700` на Linux, файл SQLite
+создаётся с правами `0600`. При выборе своего пути храните БД в каталоге,
+доступном только процессам сервиса.
+
+API удаляет копии входных записей и результаты по истечении срока хранения
+с момента завершения. Для заданий, застрявших в очереди, срок отсчитывается
+от приёма. Квота действует на всё хранилище, при её превышении POST возвращает
+HTTP 507. WAV, опубликованный по `output_wav_path`, находится в каталоге
+вызывающей стороны, которая управляет сроком его хранения.
+
+У старых заданий загрузки ещё нет токена, поэтому доступ к их результатам через
+API закрыт. Для старых заданий `by-path` действует прежний `AUDIO_SHARED_TOKEN`.
+
+Для проверки контракта и восстановления заданий запустите
+`python -m pytest orchestrator/tests/test_jobs.py -q`.

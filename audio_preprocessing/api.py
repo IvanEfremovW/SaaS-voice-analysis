@@ -345,7 +345,7 @@ def preprocess_file(
                 detail="Передан пустой аудиофайл",
             )
 
-        PyAVInputValidator().validate(tmp_path)
+        PyAVInputValidator(target_sr=service.config.target_sr).validate(tmp_path)
         result = service.process_detailed(tmp_path)
 
         audio_b64: Optional[str] = None
@@ -440,7 +440,7 @@ def preprocess_by_path(
         if request.output_wav_path else None
     )
 
-    PyAVInputValidator().validate(file_path)
+    PyAVInputValidator(target_sr=service.config.target_sr).validate(file_path)
     try:
         result = service.process_detailed(file_path)
     except FileNotFoundError as e:

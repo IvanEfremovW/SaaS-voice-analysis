@@ -15,6 +15,7 @@ from faster_whisper.audio import decode_audio
 from faster_whisper.transcribe import Segment
 from faster_whisper.vad import get_speech_timestamps
 import numpy as np
+from audio_decode import mono_float32
 
 from .config import TranscriberConfig
 from .coverage import RETRY_CONTEXT, retry_intervals, uncovered_intervals
@@ -253,25 +254,7 @@ class FasterWhisperTranscriber(BaseTranscriber):
                     segments=[],
                 )
 
-            # Приведение многоканального аудио к 1D моно
-            if audio.ndim == 2:
-                if audio.shape[0] in (1, 2) and audio.shape[1] > audio.shape[0]:
-                    audio = np.mean(audio, axis=0)
-                elif audio.shape[1] in (1, 2) and audio.shape[0] > audio.shape[1]:
-                    audio = np.mean(audio, axis=1)
-                else:
-                    audio = audio.flatten()
-            elif audio.ndim > 2:
-                audio = audio.flatten()
-
-            # Приведение к float32 с нормализацией, если целочисленный тип
-            if np.issubdtype(audio.dtype, np.integer):
-                max_val = float(np.iinfo(audio.dtype).max)
-                audio_input = (audio / max_val).astype(np.float32)
-            elif audio.dtype != np.float32:
-                audio_input = audio.astype(np.float32)
-            else:
-                audio_input = audio
+            audio_input = mono_float32(audio)
 
         else:
             raise TypeError(

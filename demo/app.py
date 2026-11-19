@@ -89,4 +89,6 @@ def transcribe_variant(variant_id: str, file: UploadFile) -> DemoResult:
             raise HTTPException(503, "Вариант недоступен. Проверьте зависимости и веса модели.") from error
 
 
-app.mount("/", StaticFiles(directory=Path(__file__).with_name("dist"), html=True))
+dist = Path(__file__).with_name("dist")
+if dist.is_dir():
+    app.mount("/", StaticFiles(directory=dist, html=True))

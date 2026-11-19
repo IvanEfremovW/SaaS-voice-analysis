@@ -7,12 +7,13 @@
 """
 
 import logging
-from math import gcd
 import subprocess
 from threading import Lock
 from pathlib import Path
 from typing import TYPE_CHECKING, Tuple, Union
 import numpy as np
+
+from audio_decode import PyAVAudioDecoder, check_resampling_cost
 
 try:
     from .interfaces import BaseConverter
@@ -101,13 +102,8 @@ class TorchAudioConverter(BaseConverter):
 
         try:
             waveform, orig_sr = torchaudio.load(str(path))
-        except (ImportError, OSError, RuntimeError, Exception):
-            import soundfile as sf
-            data, orig_sr = sf.read(str(path), dtype="float32")
-            if data.ndim == 1:
-                waveform = torch.from_numpy(data).unsqueeze(0)
-            else:
-                waveform = torch.from_numpy(data.T)
+        except (ImportError, OSError, RuntimeError, ValueError):
+            return PyAVAudioDecoder().decode(path, target_sr)
 
         # Микширование в моно при необходимости
         if waveform.shape[0] > 1:
@@ -115,9 +111,7 @@ class TorchAudioConverter(BaseConverter):
 
         # Ресемплинг при несовпадении частоты
         if orig_sr != target_sr:
-            divisor = gcd(orig_sr, target_sr)
-            if (orig_sr // divisor) * (target_sr // divisor) > 100_000:
-                raise ValueError("Слишком дорогая комбинация частот дискретизации")
+            check_resampling_cost(orig_sr, target_sr)
             with self._resampler_lock:
                 key = (orig_sr, target_sr)
                 if key not in self._resamplers:
