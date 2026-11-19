@@ -21,6 +21,7 @@ class TranscriberConfig(BaseModel):
         default="cuda",
         description="Целевое вычислительное устройство: 'cuda', 'cpu' или 'auto'"
     )
+    allow_cuda_fallback: bool = True
     device_index: int = Field(
         default=0,
         ge=0,

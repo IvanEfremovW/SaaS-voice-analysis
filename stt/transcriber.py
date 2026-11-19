@@ -63,6 +63,10 @@ def _word_key(word: TranscriptionWord) -> str:
     return word.text.casefold().strip('.,!?…:;«»“”\"()')
 
 
+class TranscriberDeviceError(RuntimeError):
+    """Запрошенное устройство недоступно."""
+
+
 class FasterWhisperTranscriber(BaseTranscriber):
     """
     Реализация транскрибатора на базе библиотеки faster-whisper.
@@ -76,13 +80,15 @@ class FasterWhisperTranscriber(BaseTranscriber):
         self.config = config or TranscriberConfig()
 
         # Нативная проверка CUDA через CTranslate2 без зависимости от PyTorch
-        cuda_count = ctranslate2.get_cuda_device_count()
         target_device = self.config.device
+        cuda_count = ctranslate2.get_cuda_device_count() if target_device != "cpu" else 0
         compute_type = self.config.compute_type
         device_index = self.config.device_index
 
         if target_device == "cuda":
             if cuda_count == 0:
+                if not self.config.allow_cuda_fallback:
+                    raise TranscriberDeviceError("CUDA недоступна на воркере")
                 logger.warning(
                     "Запрошено устройство 'cuda', но CUDA-устройства не обнаружены "
                     "(ctranslate2.get_cuda_device_count() == 0). "

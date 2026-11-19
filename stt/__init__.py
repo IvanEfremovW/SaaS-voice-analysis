@@ -4,6 +4,8 @@
 конфигурацию TranscriberConfig и валидированные Pydantic DTO (TranscriptionResult, TranscriptionSegment).
 """
 
+import os
+from pathlib import Path
 from typing import Optional
 from .config import TranscriberConfig
 from .interfaces import (
@@ -43,6 +45,12 @@ def get_transcriber(
     if normalized_engine in ("faster-whisper", "whisper"):
         return FasterWhisperTranscriber(config=config or TranscriberConfig())
 
+    if normalized_engine in ("tone", "t-one"):
+        from .tone_transcriber import ToneTranscriber
+
+        model_path = os.getenv("TONE_MODEL_PATH")
+        return ToneTranscriber(Path(model_path) if model_path else None)
+
     raise ValueError(
-        f"Неизвестный STT движок: '{engine}'. Доступные варианты: ['faster-whisper']"
+        f"Неизвестный STT движок: '{engine}'. Доступные варианты: ['faster-whisper', 't-one']"
     )

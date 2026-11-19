@@ -131,3 +131,101 @@ python -m orchestrator.demo
 ```bash
 pytest audio_preprocessing/tests/ stt/tests/ orchestrator/tests/ -v
 ```
+
+## 6. Асинхронная обработка через Celery и RabbitMQ
+
+Из корня репозитория установите зависимости командой
+`python -m pip install -r requirements.txt` и запустите RabbitMQ.
+
+```bash
+docker compose up -d rabbitmq
+```
+
+В двух терминалах с одним Python-окружением запустите API и воркер.
+
+```bash
+python -m uvicorn orchestrator.jobs.api:app --host 127.0.0.1 --port 8003
+```
+
+```bash
+python -m celery -A orchestrator.jobs.worker:app worker --pool=solo --concurrency=1 --loglevel=INFO
+```
+
+Локальная конфигурация рассчитана на один экземпляр API и один воркер.
+Воркера можно запустить после приёма записей. API возвращает HTTP 202 с
+`job_id`, `status` и `status_url` после сохранения файла и задания. Публикация
+в RabbitMQ идёт в фоне.
+
+```bash
+API=http://127.0.0.1:8003
+AUDIO=audio_preprocessing/input_test_call.mp3
+
+# Предобработка, внешний VAD и речевое аудио в Base64.
+curl -fsS -F "file=@$AUDIO" -F mode=vad -F vad=webrtc \
+  -F include_audio_base64=true "$API/api/v1/jobs"
+
+# Распознавание всего аудио с профилем демо без VAD.
+curl -fsS -F "file=@$AUDIO" -F mode=stt -F variant_id=full_audio \
+  -F device=cpu "$API/api/v1/jobs"
+
+# Предобработка, внешний Silero VAD, Whisper и исходные таймкоды.
+curl -fsS -F "file=@$AUDIO" -F mode=pipeline -F variant_id=vad_5s_beam1 \
+  -F device=cpu -F beam_size=4 "$API/api/v1/jobs"
+
+curl -fsS "$API/api/v1/jobs/variants"
+curl -fsS "$API/api/v1/jobs/<job_id>"
+```
+
+Задание проходит через состояния `queued`, `running`, `succeeded` или `failed`.
+При успехе `result` содержит расшифровку в режимах `stt` и `pipeline`.
+В режимах `vad` и `pipeline` поле `preprocessing` содержит речевые интервалы
+относительно исходного файла, длительности и, по запросу, WAV в Base64.
+При ошибке `error` содержит причину.
+
+Запрос без параметров использует полный пайплайн с Silero и Whisper на CPU.
+Профиль задаёт параметры модели, встроенного VAD и обработки пропусков. В полном
+режиме внешний VAD выделяет речь, а встроенный фильтр Whisper выключен.
+Доступны внешние детекторы `silero`, `webrtc` и `energy`. Если в запросе указаны
+`language`, `beam_size`, `condition_on_previous_text` или `initial_prompt`,
+для Whisper они имеют приоритет над значениями профиля.
+
+Whisper поддерживает `device=cpu` и `device=gpu`. Для GPU требуется CUDA и
+совместимая установка CTranslate2. Без CUDA задание завершается с ошибкой.
+T-one работает на CPU. Для него установите дополнительные Python-зависимости
+командой `python -m pip install -r demo/requirements.txt`.
+
+Для входа по пути задайте на API и воркере `AUDIO_SHARED_ROOT`. На API также
+задайте `AUDIO_SHARED_TOKEN`. Токен требуется при постановке задания и при
+получении его результата. Сервис сохраняет копию входного файла при постановке
+в очередь. Если задан `output_wav_path`, воркер публикует WAV в общем каталоге
+без перезаписи существующего файла.
+
+```bash
+curl -fsS -H "Authorization: Bearer $AUDIO_SHARED_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"vad","file_path":"calls/call.mp3","output_wav_path":"speech.wav"}' \
+  "$API/api/v1/jobs/by-path"
+```
+
+Схема доступна по `/openapi.json`, интерактивная документация — по `/docs`.
+В репозитории схема сохранена в [jobs/openapi.yaml](jobs/openapi.yaml).
+
+| Переменная | По умолчанию |
+| --- | --- |
+| `CELERY_BROKER_URL` | `amqp://transcription:transcription-local@127.0.0.1:5672//` |
+| `TRANSCRIPTION_AUDIO_DIR` | `output/jobs/audio` |
+| `TRANSCRIPTION_DB_PATH` | `output/jobs/jobs.sqlite3` |
+| `STT_ENGINE` | `faster-whisper` |
+| `STT_MODEL_SIZE` | `large-v3-turbo` |
+| `STT_COMPUTE_TYPE` | `int8` для CPU |
+| `STT_GPU_COMPUTE_TYPE` | `float16` для заданий с `device=gpu` |
+| `DEMO_VARIANTS_CONFIG` | Общий каталог `stt/variants.json` |
+
+Для короткого локального прогона задайте `STT_MODEL_SIZE=tiny` при запуске
+API и воркера. При изменении `RABBITMQ_PORT` или `RABBITMQ_PASSWORD` в Compose задайте
+тот же адрес и учётные данные в `CELERY_BROKER_URL` для API и воркера.
+
+При падении воркера RabbitMQ доставляет неподтверждённое сообщение повторно.
+На обработку даётся до трёх попыток. API и воркер хранят аудио и расшифровки
+локально, до ручной очистки. Для проверки контракта и восстановления заданий
+запустите `python -m pytest orchestrator/tests/test_jobs.py -q`.
