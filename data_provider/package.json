@@ -17,6 +17,7 @@
   "author": "",
   "type": "module",
   "scripts": {
+    "postinstall": "prisma generate",
     "start": "node --env-file-if-exists=.env app/server.ts",
     "typecheck": "tsc",
     "test": "node --env-file=.env.example --test \"tests/**/*.test.ts\""
@@ -24,12 +25,13 @@
   "devDependencies": {
     "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
-    "prisma": "^7.10.1",
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1175.0",
     "@prisma/adapter-pg": "^7.10.1",
     "@prisma/client": "^7.10.1",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "prisma": "^7.10.1"
   }
 }

@@ -1,6 +1,9 @@
 import http from 'node:http';
 import { config } from '#app/config.ts';
+import { s3Storage } from '#app/infrastructure/s3.ts';
 import { handleCallRequest } from '#app/modules/data/call/api.ts';
+
+await s3Storage.ensureBucket();
 
 http
   .createServer(async (req, res) => {

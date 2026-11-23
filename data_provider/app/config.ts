@@ -10,4 +10,12 @@ export const config = {
   port: Number(required('PORT')),
   bitrixWebhookUrl: required('BITRIX_WEBHOOK_URL'),
   downloadDir: required('DOWNLOAD_DIR'),
+  databaseUrl: required('DATABASE_URL'),
+  s3: {
+    endpoint: required('S3_ENDPOINT'),
+    region: required('S3_REGION'),
+    accessKey: required('S3_ACCESS_KEY'),
+    secretKey: required('S3_SECRET_KEY'),
+    bucket: required('S3_BUCKET'),
+  },
 };
