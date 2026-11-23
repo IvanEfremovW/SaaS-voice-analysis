@@ -1,93 +1,147 @@
-import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
-import { config } from '#app/config.ts';
-import { BitrixCallClient } from './client.ts';
-import { CallError } from './entity.ts';
-import type { Call, CallFilter, Download, Recording } from './entity.ts';
-import type { BitrixCall } from './types.ts';
+import { database } from '#app/infrastructure/database.ts';
+import type { FileContent } from '#app/modules/data/file/entity.ts';
+import { fileService } from '#app/modules/data/file/service.ts';
+import type { FileService } from '#app/modules/data/file/service.ts';
+import { CALL_STATUSES } from '#app/modules/data/status/entity.ts';
+import type { Status, UpdateStatusInput } from '#app/modules/data/status/entity.ts';
+import { statusService } from '#app/modules/data/status/service.ts';
+import type { StatusService } from '#app/modules/data/status/service.ts';
+import { transcriptionService } from '#app/modules/data/transcription/service.ts';
+import type { TranscriptionService } from '#app/modules/data/transcription/service.ts';
+import { CALL_DIRECTIONS, CallError } from './entity.ts';
+import type { Call, CallFilter, CallMetadata, CreateCallInput, Recording, UpdateCallInput } from './entity.ts';
+import { CallRepository } from './repository.ts';
 
 export class CallService {
-  #client: BitrixCallClient;
-  #downloadDir: string;
-  #downloads = new Map<string, Download>();
+  #calls: CallRepository;
+  #files: FileService;
+  #statuses: StatusService;
+  #transcriptions: TranscriptionService;
 
-  constructor(client: BitrixCallClient, downloadDir: string) {
-    this.#client = client;
-    this.#downloadDir = downloadDir;
+  constructor(calls: CallRepository, files: FileService, statuses: StatusService, transcriptions: TranscriptionService) {
+    this.#calls = calls;
+    this.#files = files;
+    this.#statuses = statuses;
+    this.#transcriptions = transcriptions;
   }
 
-  async listCalls(filter: CallFilter = {}): Promise<Call[]> {
-    const calls = await this.#client.listCalls(filter);
-    return calls.map(toCall);
-  }
-
-  /** Downloads a recording into memory. */
-  async downloadRecording(recordingId: string): Promise<Recording> {
-    const file = await this.#client.getFile(recordingId);
-    const { data, contentType } = await this.#client.download(file.DOWNLOAD_URL);
-    return { fileName: file.NAME, contentType, data };
-  }
-
-  /** Starts saving a recording to disk; follow its status with getDownload(). */
-  startDownload(recordingId: string): Download {
-    const download: Download = {
-      id: randomUUID(),
-      recordingId,
-      status: 'in_progress',
-      filePath: null,
-      error: null,
-      startedAt: new Date().toISOString(),
-      finishedAt: null,
-    };
-    this.#downloads.set(download.id, download);
-
-    this.#saveRecording(recordingId)
-      .then(
-        (filePath) => Object.assign(download, { status: 'success', filePath }),
-        (err: unknown) => Object.assign(download, { status: 'error', error: errorMessage(err) }),
-      )
-      .finally(() => {
-        download.finishedAt = new Date().toISOString();
-      });
-
-    return { ...download };
-  }
-
-  getDownload(id: string): Download | undefined {
-    const download = this.#downloads.get(id);
-    return download && { ...download };
-  }
-
-  async #saveRecording(recordingId: string): Promise<string> {
-    const recording = await this.downloadRecording(recordingId);
-    const filePath = path.join(this.#downloadDir, `${recordingId}-${randomUUID()}${path.extname(recording.fileName)}`);
+  /** Uploads the recording (with the file module's validation), then saves the call with status UPLOADED. */
+  async create({ recording, ...metadata }: CreateCallInput): Promise<Call> {
+    const checked = validate(metadata, true) as CallMetadata;
+    const file = await this.#uploadRecording(recording);
     try {
-      await mkdir(this.#downloadDir, { recursive: true });
-      await writeFile(filePath, recording.data, { flag: 'wx' });
+      return await this.#calls.create(checked, file.id);
     } catch (err) {
-      throw new CallError(500, `Cannot save the recording to ${this.#downloadDir}: ${errorMessage(err)}`);
+      await this.#files.delete(file.id).catch(() => {});
+      throw err;
     }
-    return filePath;
+  }
+
+  async get(id: string): Promise<Call> {
+    return (await this.#calls.findById(id)) ?? notFound(id);
+  }
+
+  async list(filter: CallFilter = {}): Promise<Call[]> {
+    if (filter.status !== undefined && !CALL_STATUSES.includes(filter.status)) {
+      throw new CallError(400, `"status" must be one of ${CALL_STATUSES.join(', ')}`);
+    }
+    for (const key of ['from', 'to'] as const) {
+      if (filter[key] !== undefined && Number.isNaN(Date.parse(filter[key]))) {
+        throw new CallError(400, `"${key}" must be an ISO-8601 date`);
+      }
+    }
+    return this.#calls.list(filter);
+  }
+
+  async update(id: string, input: UpdateCallInput): Promise<Call> {
+    return (await this.#calls.update(id, validate(input, false))) ?? notFound(id);
+  }
+
+  async downloadRecording(id: string): Promise<FileContent> {
+    return this.#files.download((await this.get(id)).fileId);
+  }
+
+  /**
+   * Replaces the recording. Its transcription no longer matches the audio, so it is deleted
+   * and processing starts again from UPLOADED.
+   */
+  async replaceRecording(id: string, recording: Recording): Promise<Call> {
+    const call = await this.get(id);
+    const file = await this.#uploadRecording(recording);
+    try {
+      await this.#calls.update(id, {}, file.id);
+    } catch (err) {
+      await this.#files.delete(file.id).catch(() => {});
+      throw err;
+    }
+    await this.#deleteTranscription(id);
+    await this.#statuses.update(call.status.id, { value: 'UPLOADED' });
+    await this.#files.delete(call.fileId).catch((err) => console.error(`Old recording ${call.fileId} was not removed:`, err));
+    return this.get(id);
+  }
+
+  async updateStatus(id: string, input: UpdateStatusInput): Promise<Status> {
+    return this.#statuses.update((await this.get(id)).status.id, input);
+  }
+
+  /** Deletes the call with everything that belongs to it: transcription, status and recording. */
+  async delete(id: string): Promise<void> {
+    const call = await this.get(id);
+    await this.#deleteTranscription(id);
+    if (!(await this.#calls.delete(id))) notFound(id);
+    await this.#files.delete(call.fileId).catch((err) => console.error(`Recording ${call.fileId} was not removed:`, err));
+  }
+
+  #uploadRecording({ name, data }: Recording) {
+    return this.#files.upload({ name: name || 'recording', type: 'call_recording', data });
+  }
+
+  async #deleteTranscription(callId: string): Promise<void> {
+    for (const transcription of await this.#transcriptions.list(callId)) {
+      await this.#transcriptions.delete(transcription.id);
+    }
   }
 }
 
-function toCall(call: BitrixCall): Call {
-  return {
-    id: call.CALL_ID,
-    employeeId: call.PORTAL_USER_ID,
-    phoneNumber: call.PHONE_NUMBER,
-    // CALL_TYPE 2 and 3 are incoming; 1 (outgoing), 4 (callback) and 5 (informational) are made by us.
-    direction: call.CALL_TYPE === '2' || call.CALL_TYPE === '3' ? 'incoming' : 'outgoing',
-    startedAt: call.CALL_START_DATE,
-    durationSec: Number(call.CALL_DURATION),
-    successful: call.CALL_FAILED_CODE === '200',
-    recordingId: call.RECORD_FILE_ID === null ? null : String(call.RECORD_FILE_ID),
-  };
+/** Checks metadata at runtime (it comes from a request) and returns only the known fields. */
+function validate(input: UpdateCallInput, isCreate: boolean): UpdateCallInput {
+  if (typeof input !== 'object' || input === null) throw new CallError(400, 'Body must be a JSON object');
+  const result: UpdateCallInput = {};
+  const required = (key: keyof CallMetadata) => input[key] !== undefined || isCreate;
+
+  if (required('userId')) {
+    if (typeof input.userId !== 'string' || !input.userId) throw new CallError(400, '"userId" must be a non-empty string');
+    result.userId = input.userId;
+  }
+  if (required('clientPhone')) {
+    if (typeof input.clientPhone !== 'string' || !/^\+?[\d\s()-]{3,32}$/.test(input.clientPhone.trim())) {
+      throw new CallError(400, '"clientPhone" must be a phone number');
+    }
+    result.clientPhone = input.clientPhone.trim();
+  }
+  if (required('direction')) {
+    if (!CALL_DIRECTIONS.includes(input.direction as never)) {
+      throw new CallError(400, `"direction" must be one of ${CALL_DIRECTIONS.join(', ')}`);
+    }
+    result.direction = input.direction as CallMetadata['direction'];
+  }
+  if (required('startedAt')) {
+    if (typeof input.startedAt !== 'string' || Number.isNaN(Date.parse(input.startedAt))) {
+      throw new CallError(400, '"startedAt" must be an ISO-8601 date');
+    }
+    result.startedAt = input.startedAt;
+  }
+  if (required('durationSec')) {
+    if (!Number.isInteger(input.durationSec) || (input.durationSec as number) < 0) {
+      throw new CallError(400, '"durationSec" must be a whole number of seconds');
+    }
+    result.durationSec = input.durationSec as number;
+  }
+  return result;
 }
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+function notFound(id: string): never {
+  throw new CallError(404, `Call ${id} not found`);
 }
 
-export const callService = new CallService(new BitrixCallClient(config.bitrixWebhookUrl), config.downloadDir);
+export const callService = new CallService(new CallRepository(database), fileService, statusService, transcriptionService);

@@ -1,42 +1,49 @@
+import type { CallStatus, Status } from '#app/modules/data/status/entity.ts';
+
+export const CALL_DIRECTIONS = ['INCOMING', 'OUTGOING'] as const;
+export type CallDirection = (typeof CALL_DIRECTIONS)[number];
+
 export type Call = {
   id: string;
-  employeeId: string;
-  phoneNumber: string;
-  direction: 'incoming' | 'outgoing';
-  /** ISO-8601 with timezone, e.g. "2026-09-19T13:33:40+03:00". */
+  userId: string;
+  clientPhone: string;
+  direction: CallDirection;
+  /** ISO-8601 */
   startedAt: string;
   durationSec: number;
-  /** False for missed, declined, busy, ... calls. */
-  successful: boolean;
-  /** Null if the call has no recording. */
-  recordingId: string | null;
+  /** The recording; its content is at GET /calls/:id/recording. */
+  fileId: string;
+  /** Current processing stage. */
+  status: Status;
+  createdAt: string;
+  updatedAt: string;
 };
 
-/** Calls with from <= startedAt < to, both ISO-8601. */
-export type CallFilter = {
-  from?: string;
-  to?: string;
+export type CallMetadata = {
+  userId: string;
+  clientPhone: string;
+  direction: CallDirection;
+  /** ISO-8601 */
+  startedAt: string;
+  durationSec: number;
 };
 
 export type Recording = {
-  fileName: string;
-  contentType: string;
+  /** Original file name */
+  name: string;
   data: Buffer;
 };
 
-export type DownloadStatus = 'in_progress' | 'success' | 'error';
+export type CreateCallInput = CallMetadata & { recording: Recording };
 
-/** A recording being saved to disk. */
-export type Download = {
-  id: string;
-  recordingId: string;
-  status: DownloadStatus;
-  /** Set when status is "success". */
-  filePath: string | null;
-  /** Set when status is "error". */
-  error: string | null;
-  startedAt: string;
-  finishedAt: string | null;
+export type UpdateCallInput = Partial<CallMetadata>;
+
+export type CallFilter = {
+  userId?: string;
+  status?: CallStatus;
+  /** Calls with from <= startedAt < to, ISO-8601 */
+  from?: string;
+  to?: string;
 };
 
 /** An error with the HTTP status the API answers with. */

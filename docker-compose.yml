@@ -46,11 +46,8 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: ${S3_BUCKET:?set it in .env}
-      BITRIX_WEBHOOK_URL: ${BITRIX_WEBHOOK_URL:?set it in .env}
     ports:
       - "127.0.0.1:${DATA_PROVIDER_HOST_PORT:-8030}:8030"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

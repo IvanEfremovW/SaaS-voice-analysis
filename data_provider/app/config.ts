@@ -8,8 +8,6 @@ function required(name: string): string {
 
 export const config = {
   port: Number(required('PORT')),
-  bitrixWebhookUrl: required('BITRIX_WEBHOOK_URL'),
-  downloadDir: required('DOWNLOAD_DIR'),
   databaseUrl: required('DATABASE_URL'),
   maxFileSizeBytes: Number(required('MAX_FILE_SIZE_MB')) * 1024 * 1024,
   s3: {
