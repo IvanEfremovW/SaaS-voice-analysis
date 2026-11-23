@@ -7,6 +7,8 @@ model File {
   type          String
   content_type  String
   size_bytes    BigInt
+  /// sha256 of the content; unique, so the same file can't be stored twice
+  checksum      String         @unique
   // Relation-only fields (no columns): the file of a call or of a transcription.
   call          Call?
   transcription Transcription?

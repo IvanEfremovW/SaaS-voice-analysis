@@ -11,6 +11,7 @@ export const config = {
   bitrixWebhookUrl: required('BITRIX_WEBHOOK_URL'),
   downloadDir: required('DOWNLOAD_DIR'),
   databaseUrl: required('DATABASE_URL'),
+  maxFileSizeBytes: Number(required('MAX_FILE_SIZE_MB')) * 1024 * 1024,
   s3: {
     endpoint: required('S3_ENDPOINT'),
     region: required('S3_REGION'),
