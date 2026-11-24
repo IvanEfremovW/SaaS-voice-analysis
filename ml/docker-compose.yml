@@ -26,6 +26,7 @@ services:
       - .env
     environment:
       POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
     ports:
       - "${RAG_API_PORT:-8000}:8000"
     depends_on:

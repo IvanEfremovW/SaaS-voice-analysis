@@ -1,27 +1,28 @@
 from functools import lru_cache
 
 from langchain_postgres import PGEngine, PGVectorStore
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy import inspect, text
 
-from config import SQLALCHEMY_URL, PGVECTOR_COLLECTION, VECTOR_SIZE
+from config import COMPANY_PGVECTOR_COLLECTION, SQLALCHEMY_URL, VECTOR_SIZE
 from embeddings import get_embeddings
+from requirements_store import get_engine
 
 
 @lru_cache(maxsize=1)
-def get_vectorstore() -> PGVectorStore:
-    engine = PGEngine.from_connection_string(url=SQLALCHEMY_URL)  # пул соединений с бд
-
-    try:
-        engine.init_vectorstore_table(  # создаёт таблицу под векторы
-            table_name=PGVECTOR_COLLECTION,
-            vector_size=VECTOR_SIZE,
-        )
-    except ProgrammingError as e:
-        if "already exists" not in str(e):
-            raise  # ошибка не про существующую таблицу — не прячем
+def get_company_vectorstore() -> PGVectorStore:
+    """Open the vector table for company requirements."""
+    # Serialize initial table creation across API workers and replicas.
+    with get_engine().begin() as connection:
+        connection.execute(text("SELECT pg_advisory_xact_lock(187351, 2)"))
+        engine = PGEngine.from_connection_string(url=SQLALCHEMY_URL, pool_pre_ping=True)
+        if not inspect(connection).has_table(COMPANY_PGVECTOR_COLLECTION, schema="public"):
+            engine.init_vectorstore_table(
+                table_name=COMPANY_PGVECTOR_COLLECTION,
+                vector_size=VECTOR_SIZE,
+            )
 
     return PGVectorStore.create_sync(
         engine=engine,
-        table_name=PGVECTOR_COLLECTION,
+        table_name=COMPANY_PGVECTOR_COLLECTION,
         embedding_service=get_embeddings(),
     )
