@@ -1,8 +1,13 @@
-// POST   /users       { name, email, role? } -> 201 { user }
-// GET    /users                              -> { users }
-// GET    /users/:id                          -> { user }
-// PATCH  /users/:id   { name?, email?, role? } -> { user }
-// DELETE /users/:id                          -> 204 (409 if the user still has calls)
+// POST   /users                  { name, email, password, role? } -> 201 { user }
+// GET    /users                                                  -> { users }
+// GET    /users/:id                                              -> { user }
+// PATCH  /users/:id              { name?, email?, role? }        -> { user }
+// PUT    /users/:id/password     { password }                    -> 204
+// POST   /users/check-password   { email, password }             -> { user }  (401 if either is wrong)
+// DELETE /users/:id                                              -> 204 (409 if the user still has calls)
+//
+// Passwords are 8-128 characters and stored only as hashes; no answer ever contains a password or hash.
+// This service doesn't know who is logged in: the caller (the web backend) lets only admins change passwords.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { UserError } from './entity.ts';
@@ -34,6 +39,19 @@ const routes: Route[] = [
     method: 'PATCH',
     pattern: /^\/users\/([^/]+)$/,
     handler: async (req, res, id) => sendJson(res, 200, { user: await userService.update(id, await readJson(req)) }),
+  },
+  {
+    method: 'PUT',
+    pattern: /^\/users\/([^/]+)\/password$/,
+    handler: async (req, res, id) => {
+      await userService.setPassword(id, await readJson(req));
+      res.writeHead(204).end();
+    },
+  },
+  {
+    method: 'POST',
+    pattern: /^\/users\/check-password$/,
+    handler: async (req, res) => sendJson(res, 200, { user: await userService.checkPassword(await readJson(req)) }),
   },
   {
     method: 'DELETE',

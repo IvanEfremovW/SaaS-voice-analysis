@@ -37,11 +37,11 @@ const post = (path: string, body: string) =>
 describe('user routes', () => {
   it('POST /users creates a user (201)', async () => {
     const create = mock.method(userService, 'create', async () => user);
-    const res = await post('/users', JSON.stringify({ name: 'Anna', email: 'anna@example.com' }));
+    const res = await post('/users', JSON.stringify({ name: 'Anna', email: 'anna@example.com', password: 'correct horse' }));
 
     assert.equal(res.status, 201);
     assert.deepEqual((await res.json()).user, user);
-    assert.deepEqual(create.mock.calls[0]?.arguments[0], { name: 'Anna', email: 'anna@example.com' });
+    assert.deepEqual(create.mock.calls[0]?.arguments[0], { name: 'Anna', email: 'anna@example.com', password: 'correct horse' });
   });
 
   it('POST /users answers 400 for a body that is not JSON', async () => {
@@ -68,6 +68,28 @@ describe('user routes', () => {
 
     assert.equal(res.status, 200);
     assert.deepEqual(update.mock.calls[0]?.arguments, ['u1', { role: 'ADMIN' }]);
+  });
+
+  it('PUT /users/:id/password sets the password (204)', async () => {
+    const setPassword = mock.method(userService, 'setPassword', async () => {});
+    const res = await fetch(`${base}/users/u1/password`, { method: 'PUT', body: JSON.stringify({ password: 'correct horse' }) });
+
+    assert.equal(res.status, 204);
+    assert.deepEqual(setPassword.mock.calls[0]?.arguments, ['u1', { password: 'correct horse' }]);
+  });
+
+  it('POST /users/check-password gives the user, or 401', async () => {
+    const check = mock.method(userService, 'checkPassword', async () => user);
+    const body = JSON.stringify({ email: 'anna@example.com', password: 'correct horse' });
+    const res = await post('/users/check-password', body);
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json()).user, user);
+    assert.deepEqual(check.mock.calls[0]?.arguments, [{ email: 'anna@example.com', password: 'correct horse' }]);
+
+    check.mock.mockImplementation(async () => Promise.reject(new UserError(401, 'Wrong email or password')));
+    const wrong = await post('/users/check-password', body);
+    assert.equal(wrong.status, 401);
+    assert.equal((await wrong.json()).error, 'Wrong email or password');
   });
 
   it('DELETE /users/:id answers 204', async () => {

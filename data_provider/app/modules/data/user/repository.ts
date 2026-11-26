@@ -1,7 +1,8 @@
 import type { DatabaseClient } from '#app/infrastructure/database.ts';
 import type { User as UserRow } from '#app/generated/prisma/client.ts';
 import { UserError } from './entity.ts';
-import type { CreateUserInput, UpdateUserInput, User } from './entity.ts';
+import type { UpdateUserInput, User } from './entity.ts';
+import type { NewUser, UserWithPasswordHash } from './types.ts';
 
 export class UserRepository {
   #db: DatabaseClient;
@@ -10,9 +11,9 @@ export class UserRepository {
     this.#db = db;
   }
 
-  async create(input: CreateUserInput): Promise<User> {
+  async create({ passwordHash, ...fields }: NewUser): Promise<User> {
     try {
-      return toUser(await this.#db.user.create({ data: input }));
+      return toUser(await this.#db.user.create({ data: { ...fields, password_hash: passwordHash } }));
     } catch (err) {
       throw translate(err);
     }
@@ -21,6 +22,12 @@ export class UserRepository {
   async findById(id: string): Promise<User | null> {
     const row = await this.#db.user.findUnique({ where: { id } });
     return row && toUser(row);
+  }
+
+  /** The user with their password hash, to check a password. */
+  async findWithPasswordHash(email: string): Promise<UserWithPasswordHash | null> {
+    const row = await this.#db.user.findUnique({ where: { email } });
+    return row && { user: toUser(row), passwordHash: row.password_hash };
   }
 
   async list(): Promise<User[]> {
@@ -39,6 +46,17 @@ export class UserRepository {
   }
 
   /** False if there is no such user. */
+  async setPasswordHash(id: string, passwordHash: string): Promise<boolean> {
+    try {
+      await this.#db.user.update({ where: { id }, data: { password_hash: passwordHash } });
+      return true;
+    } catch (err) {
+      if (errorCode(err) === 'P2025') return false;
+      throw err;
+    }
+  }
+
+  /** False if there is no such user. */
   async delete(id: string): Promise<boolean> {
     try {
       await this.#db.user.delete({ where: { id } });
@@ -50,6 +68,7 @@ export class UserRepository {
   }
 }
 
+// Leaves out password_hash: a User goes to other services as it is.
 function toUser(row: UserRow): User {
   return {
     id: row.id,
