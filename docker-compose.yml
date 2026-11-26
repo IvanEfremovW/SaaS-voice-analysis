@@ -54,6 +54,17 @@ services:
       s3:
         condition: service_healthy
 
+  web:
+    build: ./web
+    env_file: ./web/.env
+    environment:
+      PORT: 8040
+      DATA_PROVIDER_URL: http://data_provider:8030
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-8040}:8040"
+    depends_on:
+      - data_provider
+
 volumes:
   postgres_data:
   s3_data:
