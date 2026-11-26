@@ -1,0 +1,20 @@
+services:
+  rabbitmq:
+    image: rabbitmq:4.2
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: transcription
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD:-transcription-local}"
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit consumer_timeout 7200000"
+    ports:
+      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  rabbitmq-data:

@@ -1,0 +1,5 @@
+# Files the module writes when run locally (from this folder)
+output/
+samples/
+audio_research/output_27/
+plan.md
