@@ -1,0 +1,19 @@
+model File {
+  id            String         @id @default(uuid())
+  /// Storage location as a URI; the scheme picks the storage: "s3://bucket/key", "file:///data/key", ...
+  uri           String         @unique
+  name          String
+  /// What the file holds, e.g. "call_recording" or "transcription"
+  type          String
+  content_type  String
+  size_bytes    BigInt
+  /// sha256 of the content; unique, so the same file can't be stored twice
+  checksum      String         @unique
+  // Relation-only fields (no columns): the file of a call or of a transcription.
+  call          Call?
+  transcription Transcription?
+  created_at    DateTime       @default(now())
+  updated_at    DateTime       @updatedAt
+
+  @@map("file")
+}

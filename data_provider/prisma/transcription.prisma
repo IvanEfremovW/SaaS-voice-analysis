@@ -1,0 +1,12 @@
+model Transcription {
+  id         String   @id @default(uuid())
+  call_id    String   @unique
+  call       Call     @relation(fields: [call_id], references: [id], onDelete: Cascade)
+  /// The transcription content itself is stored in this file.
+  file_id    String   @unique
+  file       File     @relation(fields: [file_id], references: [id])
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@map("transcription")
+}

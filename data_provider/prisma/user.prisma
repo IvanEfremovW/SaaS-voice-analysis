@@ -1,0 +1,19 @@
+enum UserRole {
+  USER
+  ADMIN
+}
+
+model User {
+  id            String   @id @default(uuid())
+  name          String
+  email         String   @unique
+  role          UserRole @default(USER)
+  /// scrypt hash of the password (app/modules/data/user/password.ts), never the password itself
+  password_hash String
+  calls         Call[]
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  // "user" is a reserved word in PostgreSQL
+  @@map("users")
+}

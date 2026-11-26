@@ -1,0 +1,26 @@
+enum CallDirection {
+  INCOMING
+  OUTGOING
+}
+
+model Call {
+  id            String         @id @default(uuid())
+  user_id       String
+  user          User           @relation(fields: [user_id], references: [id])
+  client_phone  String
+  direction     CallDirection
+  started_at    DateTime
+  duration_sec  Int
+  file_id       String         @unique
+  file          File           @relation(fields: [file_id], references: [id])
+  status_id     String         @unique
+  status        Status         @relation(fields: [status_id], references: [id])
+  transcription Transcription?
+  tasks         Task[]
+  created_at    DateTime       @default(now())
+  updated_at    DateTime       @updatedAt
+
+  @@index([user_id])
+  @@index([started_at])
+  @@map("call")
+}

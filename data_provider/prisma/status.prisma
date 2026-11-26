@@ -1,0 +1,22 @@
+/// Processing stage of a call.
+enum CallStatus {
+  UPLOADED
+  TRANSCRIBING
+  TRANSCRIBED
+  ANALYZING
+  ANALYZED
+  FAILED
+}
+
+model Status {
+  id         String     @id @default(uuid())
+  value      CallStatus @default(UPLOADED)
+  /// Why processing failed, when value is FAILED
+  error      String?
+  // Relation-only field (no column), required by Prisma for the call.status_id relation.
+  call       Call?
+  created_at DateTime   @default(now())
+  updated_at DateTime   @updatedAt
+
+  @@map("status")
+}
