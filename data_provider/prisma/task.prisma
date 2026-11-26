@@ -1,0 +1,34 @@
+enum TaskType {
+  TRANSCRIPTION
+  ANALYSIS
+}
+
+enum TaskStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+/// One run of a processing step of a call. The call's status tells which stage the call is at;
+/// its tasks keep the history: when each run was asked for, with which settings, and how it ended.
+model Task {
+  id          String     @id @default(uuid())
+  call_id     String
+  call        Call       @relation(fields: [call_id], references: [id], onDelete: Cascade)
+  type        TaskType
+  status      TaskStatus @default(QUEUED)
+  /// Settings of this run, in whatever shape the module doing it needs, e.g. {"variantId": "vad_5s"}
+  metadata    Json       @default("{}")
+  /// Why the run failed, when status is FAILED
+  error       String?
+  /// When a worker took the task, and when it ended
+  started_at  DateTime?
+  finished_at DateTime?
+  created_at  DateTime   @default(now())
+  updated_at  DateTime   @updatedAt
+
+  @@index([call_id])
+  @@index([status])
+  @@map("task")
+}

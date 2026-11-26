@@ -16,6 +16,7 @@ model Call {
   status_id     String         @unique
   status        Status         @relation(fields: [status_id], references: [id])
   transcription Transcription?
+  tasks         Task[]
   created_at    DateTime       @default(now())
   updated_at    DateTime       @updatedAt
 
